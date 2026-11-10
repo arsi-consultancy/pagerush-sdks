@@ -45,7 +45,7 @@ await result.save("invoice.pdf");
 console.log(`Saved invoice.pdf (job ${result.job_id})`);
 ```
 
-A template reads the render's `data` with `#let data = json("data.json")`. More programs are in `examples/`: [`quickstart.ts`](./examples/quickstart.ts), [`async-render.ts`](./examples/async-render.ts) and [`webhook-receiver.ts`](./examples/webhook-receiver.ts).
+A template reads the render's `data` with `#let data = json("data.json")`. More programs are in `examples/`: [`quickstart.ts`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/node/examples/quickstart.ts), [`async-render.ts`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/node/examples/async-render.ts) and [`webhook-receiver.ts`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/node/examples/webhook-receiver.ts).
 
 ## Usage
 
@@ -249,7 +249,7 @@ app.post("/pagerush", express.raw({ type: "*/*", limit: "50mb" }), async (req, r
 app.listen(3000);
 ```
 
-Register this route before any global `express.json()` middleware, or that middleware will consume the body first. A dependency-free version using `node:http` is in [`examples/webhook-receiver.ts`](./examples/webhook-receiver.ts). In a Fetch-style handler (Workers, Hono, Bun), pass `await request.arrayBuffer()` and `request.headers`.
+Register this route before any global `express.json()` middleware, or that middleware will consume the body first. A dependency-free version using `node:http` is in [`examples/webhook-receiver.ts`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/node/examples/webhook-receiver.ts). In a Fetch-style handler (Workers, Hono, Bun), pass `await request.arrayBuffer()` and `request.headers`.
 
 ### Errors
 
@@ -376,8 +376,8 @@ Every public symbol has TSDoc comments, so your editor shows this documentation 
 
 ## Versioning
 
-This package follows [Semantic Versioning 2.0.0](https://semver.org). While it is `0.x`, a minor release may contain breaking changes. From `1.0.0`, breaking changes need a new major version. The SDK version is separate from the API version (`/v1`). See [CHANGELOG.md](./CHANGELOG.md) for what changed in each release.
+This package follows [Semantic Versioning 2.0.0](https://semver.org). While it is `0.x`, a minor release may contain breaking changes. From `1.0.0`, breaking changes need a new major version. The SDK version is separate from the API version (`/v1`). See [CHANGELOG.md](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/node/CHANGELOG.md) for what changed in each release.
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/node/LICENSE).
