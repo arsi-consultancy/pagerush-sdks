@@ -282,7 +282,7 @@ class Templates:
             data: Any JSON value; the template reads it with ``json("data.json")``.
             version: Render this version instead of the live one.
             filename: File name for ``Content-Disposition`` (defaults to the template name).
-            metadata: Up to 20 string pairs, echoed on the job and in the webhook.
+            metadata: Up to 20 string pairs (at most 4 KB as JSON), echoed on the job and in the webhook.
             delete_after_download: Don't keep the PDF for 24 hours after you have it.
             callback_url: Queue the render and POST the signed PDF to this https URL.
             idempotency_key: Your own key: 1-255 characters from ``A-Z a-z 0-9 _ - : .``.

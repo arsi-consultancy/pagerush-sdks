@@ -155,7 +155,7 @@ $result = $client->templates->render($templateId, [
     'data' => ['customer' => 'Acme Ltd'],    // required: any JSON value
     'version' => 3,                          // render this version instead of the live one
     'filename' => 'invoice-42.pdf',          // Content-Disposition file name
-    'metadata' => ['order_id' => '42'],      // up to 20 string pairs, echoed on the job and webhook
+    'metadata' => ['order_id' => '42'],      // up to 20 string pairs (4 KB), echoed on the job and webhook
     'delete_after_download' => true,         // don't keep the PDF for 24 hours
 ]);
 

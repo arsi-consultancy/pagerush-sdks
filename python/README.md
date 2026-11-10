@@ -124,7 +124,7 @@ result = client.templates.render(
     data={"number": "INV-001"},
     version=3,  # optional: render this version instead of the live one
     filename="invoice-001",  # optional: Content-Disposition file name
-    metadata={"order_id": "42"},  # optional: up to 20 string pairs, echoed on the job and webhook
+    metadata={"order_id": "42"},  # optional: up to 20 string pairs (4 KB), echoed on the job and webhook
     delete_after_download=True,  # optional: don't keep the PDF for 24 hours
     idempotency_key="order-42-pdf",  # optional: see "Retries and idempotency"
 )

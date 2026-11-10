@@ -137,7 +137,7 @@ const result = await client.templates.render(template.id, {
   data: { number: "INV-002" }, // required: any JSON value
   version: 3, // optional: render this version instead of the live one
   filename: "INV-002.pdf", // optional: name in Content-Disposition
-  metadata: { order: "42" }, // optional: up to 20 string pairs, echoed on the job and callback
+  metadata: { order: "42" }, // optional: up to 20 string pairs (4 KB), echoed on the job and callback
   delete_after_download: true, // optional: don't keep the PDF for 24 hours
 });
 

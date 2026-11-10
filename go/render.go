@@ -21,7 +21,7 @@ type RenderParams struct {
 	Version *int `json:"version,omitempty"`
 	// Filename is used in the response's Content-Disposition header.
 	Filename *string `json:"filename,omitempty"`
-	// Metadata is up to 20 string pairs, echoed on the job and the callback.
+	// Metadata is up to 20 string pairs (at most 4 KB as JSON), echoed on the job and the callback.
 	Metadata map[string]string `json:"metadata,omitempty"`
 	// DeleteAfterDownload deletes the PDF as soon as you have it instead of
 	// keeping it for 24 hours. Nil uses the project's setting.

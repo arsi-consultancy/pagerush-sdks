@@ -155,7 +155,7 @@ export interface RenderOptions {
   version?: number | undefined;
   /** File name for Content-Disposition. Letters, numbers, spaces, `-`, `.`, `_`. */
   filename?: string | undefined;
-  /** Up to 20 string pairs, echoed on the job and in the callback. */
+  /** Up to 20 string pairs (at most 4 KB as JSON), echoed on the job and in the callback. */
   metadata?: Record<string, string> | undefined;
   /** Delete the PDF once you have it instead of keeping it for 24 hours. Defaults to the project setting. */
   delete_after_download?: boolean | undefined;
