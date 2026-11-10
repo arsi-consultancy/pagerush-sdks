@@ -37,6 +37,12 @@ jobs:
       - name: Publish to npm
         run: |
           version="${GITHUB_REF_NAME#node-v}"
+          # Skip a version that is already on npm (published by hand, or by an earlier run of
+          # this tag that failed after publishing) so the run can still create the GitHub release.
+          if [[ "$(npm view "pagerush@$version" version 2>/dev/null)" == "$version" ]]; then
+            echo "::notice::pagerush@$version is already on npm; skipping publish."
+            exit 0
+          fi
           if [[ "$version" == *-* ]]; then dist_tag=next; else dist_tag=latest; fi
           npm publish --access public --tag "$dist_tag"
       - name: Create the GitHub release
