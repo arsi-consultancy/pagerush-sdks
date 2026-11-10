@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: write # create the GitHub release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - name: Check the tag and read the changelog entry
         run: scripts/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
