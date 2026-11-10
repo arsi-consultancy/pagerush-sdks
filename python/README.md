@@ -2,7 +2,7 @@
 
 The official Python client for the [PageRush](https://pagerush.dev) API. PageRush renders Typst templates to PDF.
 
-- Python 3.10 or newer. No dependencies outside the standard library.
+- Python 3.9 or newer. No dependencies outside the standard library.
 - Targets API version `v1`.
 - Fully typed (PEP 561). API resources are plain `dict`s described by `TypedDict`s.
 

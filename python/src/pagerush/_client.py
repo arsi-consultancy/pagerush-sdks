@@ -58,6 +58,8 @@ def _parse_retry_after(value: Optional[str]) -> Optional[int]:
         when = email.utils.parsedate_to_datetime(value)
     except (TypeError, ValueError, IndexError, OverflowError):
         return None
+    if when is None:  # pragma: no cover - Python 3.9 returns None on some bad input
+        return None
     try:
         delta = math.ceil(when.timestamp() - time.time())
     except (OverflowError, ValueError, OSError):

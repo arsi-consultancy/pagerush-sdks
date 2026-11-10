@@ -19,8 +19,8 @@ root runs every SDK's checks; you can also run one SDK's checks on its own:
 | SDK | Requirements | Checks |
 |---|---|---|
 | `node/` | Node.js 20+, pnpm 10 | `pnpm install && pnpm typecheck && pnpm lint && pnpm test` |
-| `python/` | Python 3.10+ | `pip install -e '.[dev]' && ruff check . && ruff format --check . && mypy && pytest` |
-| `php/` | PHP 8.2+ with `ext-curl`, Composer | `composer install && composer check` |
+| `python/` | Python 3.9+ | `pip install -e '.[dev]' && ruff check . && ruff format --check . && mypy && pytest` |
+| `php/` | PHP 8.1+ with `ext-curl`, Composer | `composer install && composer check` |
 | `go/` | Go 1.21+ | `gofmt -l . && go vet ./... && go test -race ./...` |
 
 The tests run offline against a mock transport or a local HTTP server. Each SDK also has a live test
