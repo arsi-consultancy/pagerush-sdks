@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-24.04
     defaults: { run: { working-directory: go } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version: stable, check-latest: true }
       # Reports only vulnerabilities our code can reach, in the current Go release. Older Go
       # releases have known issues that only upgrading Go fixes (see SECURITY.md).
@@ -32,10 +32,10 @@ jobs:
     runs-on: ubuntu-24.04
     defaults: { run: { working-directory: node } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with: { version: 10 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - run: pnpm audit
 
@@ -44,8 +44,8 @@ jobs:
     runs-on: ubuntu-24.04
     defaults: { run: { working-directory: python } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.13" }
       - run: pip install -e '.[dev]' pip-audit
       - run: pip-audit --skip-editable
@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-24.04
     defaults: { run: { working-directory: php } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: shivammathur/setup-php@v2
         with: { php-version: "8.4", tools: composer }
       - run: composer install --no-interaction
