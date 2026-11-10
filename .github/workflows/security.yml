@@ -25,7 +25,8 @@ jobs:
         with: { go-version: stable, check-latest: true }
       # Reports only vulnerabilities our code can reach, in the current Go release. Older Go
       # releases have known issues that only upgrading Go fixes (see SECURITY.md).
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      # Dependabot does not update this pin: bump it when govulncheck has a new release.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   node:
     name: Node.js (pnpm audit)
