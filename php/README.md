@@ -3,7 +3,7 @@
 The official PHP client for [PageRush](https://pagerush.dev): manage Typst templates, render them to
 PDF, and verify webhook deliveries.
 
-- Requires PHP 8.1 or later with `ext-curl` and `ext-json`. No other runtime dependencies.
+- Requires PHP 8.2 or later with `ext-curl` and `ext-json`. No other runtime dependencies.
 - Targets the PageRush HTTP API `v1`.
 
 ## Install
@@ -517,7 +517,7 @@ version is `0.x`, a minor release may contain breaking changes; from `1.0.0`, br
 major release. The SDK version is separate from the HTTP API version (`v1`). In the monorepo, releases
 are tagged `php-vX.Y.Z`. See the [CHANGELOG](CHANGELOG.md).
 
-Supported: PHP 8.1 and later.
+Supported: PHP 8.2 and later.
 
 ## Licence
 
