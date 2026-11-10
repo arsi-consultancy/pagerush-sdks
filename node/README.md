@@ -2,7 +2,7 @@
 
 The official Node.js and TypeScript client for the [PageRush](https://pagerush.dev) API, which turns Typst templates and JSON data into PDFs.
 
-It has no runtime dependencies. It uses the built-in `fetch` and Web Crypto, so the same package runs on Node.js 18+, Bun, Deno and Cloudflare Workers. It ships ESM, CommonJS and TypeScript types.
+It has no runtime dependencies. It uses the built-in `fetch` and Web Crypto, so the same package runs on Node.js 20+, Bun, Deno and Cloudflare Workers. It ships ESM, CommonJS and TypeScript types.
 
 ## Install
 
@@ -370,7 +370,7 @@ Every public symbol has TSDoc comments, so your editor shows this documentation 
 
 ## Supported versions
 
-- Node.js 18 or later. Also Bun, Deno and Cloudflare Workers (anything with `fetch` and Web Crypto). `result.save()` and `fileFromPath()` need a `node:fs` implementation.
+- Node.js 20 or later. Also Bun, Deno and Cloudflare Workers (anything with `fetch` and Web Crypto). `result.save()` and `fileFromPath()` need a `node:fs` implementation.
 - TypeScript 5.0 or later for the bundled types.
 - API version: `v1`.
 

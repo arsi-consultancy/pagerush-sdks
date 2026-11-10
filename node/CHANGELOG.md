@@ -41,7 +41,7 @@ follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
   that is not a JSON object of strings gives `metadata: null`; a `pdf.failed` body that is not a JSON
   object is rejected.
 - `templateFile` and `fileFromPath` helpers that pick `utf8` or `base64` encoding by file extension.
-- ESM and CommonJS builds with TypeScript declarations. Runs on Node.js 18+, Bun, Deno and Cloudflare
+- ESM and CommonJS builds with TypeScript declarations. Runs on Node.js 20+, Bun, Deno and Cloudflare
   Workers. The CommonJS build loads Node built-ins with `require`, so it also works under Jest.
 
 [Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/node-v0.1.0...HEAD
