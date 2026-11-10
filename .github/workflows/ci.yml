@@ -14,7 +14,7 @@ jobs:
   node:
     runs-on: ubuntu-24.04
     strategy:
-      matrix: { node: [20, 22, 24] }
+      matrix: { node: [20, 22, 24, 26] }
     defaults: { run: { working-directory: node } }
     steps:
       - uses: actions/checkout@v4
