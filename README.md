@@ -44,7 +44,6 @@ Each SDK's README has the same example in its own language.
 SPEC.md        the behaviour every SDK implements (methods, retries, errors, webhooks, versioning)
 testdata/      shared test vectors (webhook signatures) that every SDK's tests read
 node/ python/ php/ go/   one SDK each, with its own README, CHANGELOG and examples
-integrations/  no-code integrations (Zapier, n8n), coming later
 ```
 
 ## Versioning
@@ -55,6 +54,11 @@ Each SDK follows [Semantic Versioning](https://semver.org) and is released on it
 ## API reference
 
 The HTTP API is described by an OpenAPI 3.1 document at `https://pagerush.dev/v1/openapi.json`.
+
+## Contributing and security
+
+Bug reports and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Please report
+security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## Licence
 

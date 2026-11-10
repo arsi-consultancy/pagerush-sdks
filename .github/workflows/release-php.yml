@@ -1,0 +1,56 @@
+name: Release PHP SDK
+
+# Packagist installs from a read-only split repository that holds only php/. This workflow pushes
+# php/ there as its main branch and tags it vX.Y.Z; Packagist picks the tag up through its webhook.
+
+on:
+  push:
+    tags: ["php-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  SPLIT_REPO: git@github.com:arsi-consultancy/pagerush-php.git
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    environment: packagist
+    permissions:
+      contents: write # create the GitHub release
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Check the tag and read the changelog entry
+        run: scripts/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: "8.4", extensions: curl, tools: composer }
+      - name: Run the checks
+        working-directory: php
+        run: composer install --no-interaction && composer check
+      - name: Push php/ to the split repository and tag it
+        env:
+          SPLIT_DEPLOY_KEY: ${{ secrets.PHP_SPLIT_DEPLOY_KEY }}
+        run: |
+          version="${GITHUB_REF_NAME#php-v}"
+          key="$RUNNER_TEMP/split_key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$SPLIT_DEPLOY_KEY" > "$key"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          curl -fsSL https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com " + .' > "$RUNNER_TEMP/known_hosts"
+
+          split="$(git subtree split --prefix=php HEAD)"
+          git tag "v$version" "$split"
+          git push "$SPLIT_REPO" "$split:refs/heads/main" "refs/tags/v$version"
+          rm -f "$key"
+      - name: Create the GitHub release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          version="${GITHUB_REF_NAME#php-v}"
+          prerelease=(); [[ "$version" == *-* ]] && prerelease=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" --title "PHP SDK $version" \
+            --notes-file "$RUNNER_TEMP/notes.md" --verify-tag "${prerelease[@]}"
