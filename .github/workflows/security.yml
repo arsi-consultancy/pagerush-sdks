@@ -1,0 +1,62 @@
+name: Security
+
+# Known-vulnerability scans: weekly, so new advisories are noticed without a code change, and on
+# every push and pull request.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go (govulncheck, latest Go)
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: go } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable, check-latest: true }
+      # Reports only vulnerabilities our code can reach, in the current Go release. Older Go
+      # releases have known issues that only upgrading Go fixes (see SECURITY.md).
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+  node:
+    name: Node.js (pnpm audit)
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: node } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: pnpm audit
+
+  python:
+    name: Python (pip-audit)
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: python } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -e '.[dev]' pip-audit
+      - run: pip-audit --skip-editable
+
+  php:
+    name: PHP (composer audit)
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: php } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: "8.4", tools: composer }
+      - run: composer install --no-interaction
+      - run: composer audit

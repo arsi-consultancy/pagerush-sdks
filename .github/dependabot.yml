@@ -1,0 +1,23 @@
+# Weekly update proposals. The SDKs have no runtime dependencies, so these cover development tools
+# and the GitHub Actions used in CI and releases.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups: { actions: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /node
+    schedule: { interval: weekly }
+    groups: { node-dev: { patterns: ["*"], update-types: [minor, patch] } }
+  - package-ecosystem: pip
+    directory: /python
+    schedule: { interval: weekly }
+    groups: { python-dev: { patterns: ["*"], update-types: [minor, patch] } }
+  - package-ecosystem: composer
+    directory: /php
+    schedule: { interval: weekly }
+    groups: { php-dev: { patterns: ["*"], update-types: [minor, patch] } }
+  - package-ecosystem: gomod
+    directory: /go
+    schedule: { interval: weekly }

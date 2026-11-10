@@ -2,3 +2,7 @@ packages:
   - "."
 allowBuilds:
   esbuild: true
+
+overrides:
+  # GHSA-g3hv-75wg-m249 is fixed only in minimatch 11; typedoc still asks for 10.
+  minimatch: ^11.0.1
