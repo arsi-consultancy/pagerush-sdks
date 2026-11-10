@@ -1,0 +1,59 @@
+{
+    "name": "pagerush/pagerush-php",
+    "description": "Official PHP client for the PageRush API: render Typst templates to PDF and verify webhooks.",
+    "type": "library",
+    "keywords": [
+        "pdf",
+        "typst",
+        "pagerush",
+        "pdf-generation",
+        "api-client"
+    ],
+    "homepage": "https://github.com/arsi-consultancy/pagerush-sdks",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Arsi Consultancy"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/arsi-consultancy/pagerush-sdks/issues",
+        "source": "https://github.com/arsi-consultancy/pagerush-sdks",
+        "docs": "https://github.com/arsi-consultancy/pagerush-sdks/tree/main/php#readme"
+    },
+    "require": {
+        "php": ">=8.1",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.95",
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^10"
+    },
+    "autoload": {
+        "psr-4": {
+            "PageRush\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "PageRush\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse --no-progress --memory-limit=512M",
+        "cs": "php-cs-fixer fix --dry-run --diff",
+        "cs:fix": "php-cs-fixer fix",
+        "check": [
+            "@cs",
+            "@analyse",
+            "@test"
+        ]
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
+}

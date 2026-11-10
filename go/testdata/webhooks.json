@@ -1,0 +1,402 @@
+{
+  "description": "X-PageRush-Signature (v2) verification vectors. Every SDK must pass all of them. 'reason' is the failure category: header (malformed), timestamp (outside tolerance), signature (no v2 matches). A missing X-PageRush-Metadata header is signed as an empty string.",
+  "cases": [
+    {
+      "name": "pdf body, current secret",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225610,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "failure body, no metadata header",
+      "body_base64": "eyJldmVudCI6InBkZi5mYWlsZWQiLCJqb2JfaWQiOiJqb2JfMTIzIiwidGVtcGxhdGVfaWQiOiJ0cGxfMSIsImVycm9yIjp7ImNvZGUiOiJURU1QTEFURV9DT01QSUxFX0ZBSUxFRCIsIm1lc3NhZ2UiOiJ1bmtub3duIHZhcmlhYmxlOiBmb28ifSwibWV0YWRhdGEiOnsib3JkZXIiOiI0MiJ9LCJjcmVhdGVkX2F0IjoiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIn0=",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=8005d9f36e830585bded52dc31c1ebc22582341e54daf225b6c2560fb22582fa",
+        "X-PageRush-Event": "pdf.failed",
+        "X-PageRush-Job-Id": "job_123"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "succeeded without metadata header",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=eb4b4e6bff784a94be305ccaf242a110bf348c50bb5f32da25571849030db82e",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "rotation: two v2, receiver has old secret",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9,v2=85c70ea30547193d29d09b439c789821888f6709543b2afdf1ed702074125728",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_previous_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "rotation: two v2, receiver has new secret",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9,v2=85c70ea30547193d29d09b439c789821888f6709543b2afdf1ed702074125728",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "receiver passes several secrets",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_wrong",
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "wrong secret",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_wrong"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "signature"
+    },
+    {
+      "name": "body tampered",
+      "body_base64": "JVBERi0xLjcgdGFtcGVyZWQ=",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "signature"
+    },
+    {
+      "name": "job id header changed",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_999",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "signature"
+    },
+    {
+      "name": "event header changed",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.failed",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "signature"
+    },
+    {
+      "name": "metadata header changed",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"43\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "signature"
+    },
+    {
+      "name": "metadata header removed",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "signature"
+    },
+    {
+      "name": "too old",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225901,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "timestamp"
+    },
+    {
+      "name": "too far in future",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225299,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "timestamp"
+    },
+    {
+      "name": "exactly at tolerance",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225900,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "missing t",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "header"
+    },
+    {
+      "name": "t too long",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=0176722560000000000000,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "header"
+    },
+    {
+      "name": "duplicate t",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,t=1767225600,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "header"
+    },
+    {
+      "name": "missing v2",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "header"
+    },
+    {
+      "name": "old v1 scheme only",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v1=1c19be633aef27feef09a936255a0b03bf3000b5fc9c2bc6086c1f14424f91fc",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "header"
+    },
+    {
+      "name": "empty signature header",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "header"
+    },
+    {
+      "name": "spaces after commas",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600, v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "unknown scheme ignored",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v0=deadbeef,v2=342669db7113f8a66595c09e6ec811c2feacd4892f011a00819deea45136b9f9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "uppercase hex signature",
+      "body_base64": "JVBERi0xLjcKJSB0ZXN0IGJvZHkKJSVFT0YK",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=342669DB7113F8A66595C09E6EC811C2FEACD4892F011A00819DEEA45136B9F9",
+        "X-PageRush-Event": "pdf.succeeded",
+        "X-PageRush-Job-Id": "job_123",
+        "X-PageRush-Metadata": "{\"order\":\"42\",\"amount\":\"\\u20b91,250\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "signature"
+    }
+  ]
+}

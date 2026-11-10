@@ -1,0 +1,70 @@
+{
+  "name": "pagerush",
+  "version": "0.1.0",
+  "description": "Official Node.js / TypeScript SDK for the PageRush PDF API (Typst templates).",
+  "license": "MIT",
+  "author": "Arsi Consultancy",
+  "homepage": "https://pagerush.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arsi-consultancy/pagerush-sdks.git",
+    "directory": "node"
+  },
+  "bugs": {
+    "url": "https://github.com/arsi-consultancy/pagerush-sdks/issues"
+  },
+  "keywords": [
+    "pagerush",
+    "pdf",
+    "pdf-generation",
+    "typst",
+    "templates",
+    "api",
+    "sdk",
+    "webhooks"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check .",
+    "format": "prettier --write .",
+    "docs": "typedoc",
+    "prepublishOnly": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "prettier": "^3.9.10",
+    "tsup": "^9.0.0",
+    "typedoc": "^0.28.20",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

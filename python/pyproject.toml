@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pagerush"
+dynamic = ["version"]
+description = "Official Python SDK for the PageRush API: render Typst templates to PDF."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [{ name = "Arsi Consultancy" }]
+keywords = ["pagerush", "pdf", "typst", "templates", "api", "sdk"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "mypy>=1.8", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://pagerush.dev"
+Documentation = "https://github.com/arsi-consultancy/pagerush-sdks/tree/main/python#readme"
+Repository = "https://github.com/arsi-consultancy/pagerush-sdks"
+Issues = "https://github.com/arsi-consultancy/pagerush-sdks/issues"
+Changelog = "https://github.com/arsi-consultancy/pagerush-sdks/blob/main/python/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/pagerush/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pagerush"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/pagerush", "tests", "examples", "README.md", "CHANGELOG.md", "LICENSE", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+files = ["src", "examples"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N"]
+ignore = ["UP006", "UP007", "UP035", "UP045"]
