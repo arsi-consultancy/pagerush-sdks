@@ -2,13 +2,13 @@
 
 import {
   type HttpClient,
+  idempotencyKey as idempotencyKeyHeader,
   invalidResponse,
   isObject,
   parseJsonBody,
   type RequestOptions,
-  validationError,
 } from "./http";
-import { uuidv4, writeLocalFile } from "./internal";
+import { writeLocalFile } from "./internal";
 import type {
   CreateTemplateParams,
   CreateVersionParams,
@@ -23,9 +23,6 @@ import type {
 } from "./types";
 
 const enc = encodeURIComponent;
-
-/** The server's rule for Idempotency-Key values. */
-const IDEMPOTENCY_KEY = /^[A-Za-z0-9_\-:.]{1,255}$/;
 
 const intOrNull = (v: string | null): number | null => {
   if (v === null || v.trim() === "") return null;
@@ -206,12 +203,7 @@ export class Templates {
     if (rest.delete_after_download !== undefined) body.delete_after_download = rest.delete_after_download;
     if (rest.callback_url !== undefined) body.callback_url = rest.callback_url;
 
-    if (idempotencyKey !== undefined && !IDEMPOTENCY_KEY.test(idempotencyKey)) {
-      throw validationError(
-        "idempotencyKey must be 1-255 characters from A-Z, a-z, 0-9, '_', '-', ':' and '.'",
-      );
-    }
-    const headers: Record<string, string> = { "Idempotency-Key": idempotencyKey ?? (await uuidv4()) };
+    const headers: Record<string, string> = { "Idempotency-Key": await idempotencyKeyHeader(idempotencyKey) };
     if (preferAsync) headers.Prefer = "respond-async";
 
     const res = await this.http.request({

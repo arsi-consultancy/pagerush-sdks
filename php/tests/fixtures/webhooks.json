@@ -397,6 +397,71 @@
       "tolerance_seconds": 300,
       "valid": false,
       "reason": "signature"
+    },
+    {
+      "name": "batch.completed, with metadata",
+      "body_base64": "eyJldmVudCI6ImJhdGNoLmNvbXBsZXRlZCIsImJhdGNoIjp7ImlkIjoiYmF0XzEyMyIsInN0YXR1cyI6InBhcnRpYWwiLCJpdGVtX2NvdW50IjozLCJzdWNjZWVkZWQiOjIsImZhaWxlZCI6MSwiemlwX3VybCI6Imh0dHBzOi8vcGFnZXJ1c2guZGV2L3YxL2JhdGNoZXMvYmF0XzEyMy96aXAifX0=",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=46136f443c97fd6f4641293ccab394b51468ed62a9d54ed5380d0ee904892ca9",
+        "X-PageRush-Event": "batch.completed",
+        "X-PageRush-Batch-Id": "bat_123",
+        "X-PageRush-Metadata": "{\"run\":\"nov\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "batch.completed, no metadata header",
+      "body_base64": "eyJldmVudCI6ImJhdGNoLmNvbXBsZXRlZCIsImJhdGNoIjp7ImlkIjoiYmF0XzEyMyIsInN0YXR1cyI6InBhcnRpYWwiLCJpdGVtX2NvdW50IjozLCJzdWNjZWVkZWQiOjIsImZhaWxlZCI6MSwiemlwX3VybCI6Imh0dHBzOi8vcGFnZXJ1c2guZGV2L3YxL2JhdGNoZXMvYmF0XzEyMy96aXAifX0=",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=0f70cd2c6ffd2d5da13e124d289e2fe84381f0f9a808fe487dc7a0aa09f3e758",
+        "X-PageRush-Event": "batch.completed",
+        "X-PageRush-Batch-Id": "bat_123"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": true
+    },
+    {
+      "name": "batch id header changed",
+      "body_base64": "eyJldmVudCI6ImJhdGNoLmNvbXBsZXRlZCIsImJhdGNoIjp7ImlkIjoiYmF0XzEyMyIsInN0YXR1cyI6InBhcnRpYWwiLCJpdGVtX2NvdW50IjozLCJzdWNjZWVkZWQiOjIsImZhaWxlZCI6MSwiemlwX3VybCI6Imh0dHBzOi8vcGFnZXJ1c2guZGV2L3YxL2JhdGNoZXMvYmF0XzEyMy96aXAifX0=",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=46136f443c97fd6f4641293ccab394b51468ed62a9d54ed5380d0ee904892ca9",
+        "X-PageRush-Event": "batch.completed",
+        "X-PageRush-Batch-Id": "bat_999",
+        "X-PageRush-Metadata": "{\"run\":\"nov\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "signature"
+    },
+    {
+      "name": "batch.completed with a job id header instead of the batch id header",
+      "body_base64": "eyJldmVudCI6ImJhdGNoLmNvbXBsZXRlZCIsImJhdGNoIjp7ImlkIjoiYmF0XzEyMyIsInN0YXR1cyI6InBhcnRpYWwiLCJpdGVtX2NvdW50IjozLCJzdWNjZWVkZWQiOjIsImZhaWxlZCI6MSwiemlwX3VybCI6Imh0dHBzOi8vcGFnZXJ1c2guZGV2L3YxL2JhdGNoZXMvYmF0XzEyMy96aXAifX0=",
+      "headers": {
+        "X-PageRush-Signature": "t=1767225600,v2=46136f443c97fd6f4641293ccab394b51468ed62a9d54ed5380d0ee904892ca9",
+        "X-PageRush-Event": "batch.completed",
+        "X-PageRush-Job-Id": "bat_123",
+        "X-PageRush-Metadata": "{\"run\":\"nov\"}"
+      },
+      "secrets": [
+        "whsec_current_secret"
+      ],
+      "now": 1767225600,
+      "tolerance_seconds": 300,
+      "valid": false,
+      "reason": "header"
     }
   ]
 }

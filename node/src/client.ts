@@ -1,5 +1,6 @@
 /** The PageRush client. @module */
 
+import { Batches } from "./batches";
 import { HttpClient, type Sleep } from "./http";
 import { defaultSleep, env } from "./internal";
 import { Jobs } from "./jobs";
@@ -19,7 +20,7 @@ export interface PageRushOptions {
   /** The `fetch` to use. Defaults to the global `fetch`. Inject one for tests or proxies. */
   fetch?: typeof fetch | undefined;
   /**
-   * Waits between retries and between {@link Jobs.wait} polls. Inject one to make tests fast. It
+   * Waits between retries and between {@link Jobs.wait} and {@link Batches.wait} polls. Inject one to make tests fast. It
    * receives the call's `AbortSignal`, if any, and should stop early when that aborts.
    */
   sleep?: Sleep | undefined;
@@ -58,6 +59,8 @@ export class PageRush {
   readonly templates: Templates;
   /** Check on renders and download their PDFs. */
   readonly jobs: Jobs;
+  /** Render many documents from one template and download them as a ZIP. */
+  readonly batches: Batches;
   /** Verify and parse callback deliveries. The same functions as the top-level `webhooks` export. */
   readonly webhooks = webhooks;
   /** The resolved base URL, without a trailing slash. */
@@ -97,6 +100,7 @@ export class PageRush {
     });
     this.templates = new Templates(http);
     this.jobs = new Jobs(http);
+    this.batches = new Batches(http);
   }
 
   /** What `console.log(client)` shows. The API key is never included. */

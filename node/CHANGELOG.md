@@ -7,6 +7,32 @@ follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+### Added
+
+- Batches: `client.batches.create(templateId, { items, version?, metadata?, delete_after_download?,
+callback_url?, idempotencyKey? })` queues up to 1,000 renders of one template, `get` returns a batch
+  with its items, `wait` polls until it is `succeeded`, `partial` or `failed` (defaults: 600 seconds,
+  every 2 seconds), and `downloadZip` downloads the PDFs as one ZIP (with the API key; a 200 that is not
+  `application/zip` raises `INVALID_RESPONSE`).
+- `batches.create` always sends an `Idempotency-Key` (a random UUID unless you pass one), reused across
+  retries, and is retried on connection errors, timeouts, 429, 502, 503 and 504.
+- Types `Batch`, `BatchStatus`, `BatchItem`, `BatchItemInput` and `CreateBatchOptions`, and the
+  `Batches` class.
+- Webhooks: `batch.completed` notices. `verify` reads the id from `X-PageRush-Batch-Id` for that event
+  (a `X-PageRush-Job-Id` header doesn't count) and `X-PageRush-Job-Id` otherwise. `constructEvent`
+  returns `batch_id` and `batch` for it, and rejects a body without a `batch` object with reason
+  `header`.
+- `examples/batch.ts`: render one PDF per CSV row, wait, and save the ZIP. The webhook receiver example
+  also handles `batch.completed`.
+
+### Changed
+
+- `WebhookEvent.job_id` is now `string | null` (null for `batch.completed`), and `WebhookEvent` has
+  new `batch_id` and `batch` fields (null for job events). Code that passes `event.job_id` where a
+  `string` is expected needs a null check.
+
 ## [0.1.0] - 2026-11-09
 
 ### Added
@@ -44,5 +70,6 @@ follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 - ESM and CommonJS builds with TypeScript declarations. Runs on Node.js 20+, Bun, Deno and Cloudflare
   Workers. The CommonJS build loads Node built-ins with `require`, so it also works under Jest.
 
-[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/node-v0.1.0...HEAD
+[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/node-v0.2.0...HEAD
+[0.2.0]: https://github.com/arsi-consultancy/pagerush-sdks/compare/node-v0.1.0...node-v0.2.0
 [0.1.0]: https://github.com/arsi-consultancy/pagerush-sdks/releases/tag/node-v0.1.0

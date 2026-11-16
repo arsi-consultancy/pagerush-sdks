@@ -39,7 +39,8 @@ const (
 	CodeURLNotAllowed         = "URL_NOT_ALLOWED"
 	CodeInvalidOutput         = "INVALID_OUTPUT"
 	// CodeConflict on a render means the API is still rendering an earlier
-	// attempt with the same idempotency key. Render retries it.
+	// attempt with the same idempotency key. Render retries it. On
+	// Batches.DownloadZip it means the batch is still rendering.
 	CodeConflict = "CONFLICT"
 
 	// CodeUnknown is set when an error response has no problem+json code.
@@ -50,8 +51,8 @@ const (
 	// CodeTimeout is set when an attempt timed out or the context deadline
 	// passed (Status is 0).
 	CodeTimeout = "TIMEOUT"
-	// CodeWaitTimeout is set by Jobs.Wait when the job has not finished
-	// within the wait timeout (Status is 0).
+	// CodeWaitTimeout is set by Jobs.Wait and Batches.Wait when the job or
+	// batch has not finished within the wait timeout (Status is 0).
 	CodeWaitTimeout = "WAIT_TIMEOUT"
 	// CodeInvalidResponse is set when a 2xx response cannot be used: a body
 	// that is not the expected JSON, or a render that is not a PDF. Status is

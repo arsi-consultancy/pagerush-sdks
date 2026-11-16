@@ -26,8 +26,6 @@ final class Templates
     private const RENDER_BODY_FIELDS = ['data', 'version', 'filename', 'metadata', 'delete_after_download', 'callback_url'];
     /** Render options handled by the SDK (sent as headers). */
     private const RENDER_SDK_OPTIONS = ['idempotency_key', 'prefer_async'];
-    /** The API's rule for Idempotency-Key values. */
-    private const IDEMPOTENCY_KEY = '/^[A-Za-z0-9_\-:.]{1,255}$/D';
 
     /**
      * @internal Use `$client->templates`.
@@ -258,10 +256,7 @@ final class Templates
             $body['metadata'] = new \stdClass();
         }
 
-        $key = $options['idempotency_key'] ?? HttpClient::uuid4();
-        if (!is_string($key) || preg_match(self::IDEMPOTENCY_KEY, $key) !== 1) {
-            throw new InvalidArgumentException('idempotency_key must be 1-255 characters from A-Z, a-z, 0-9, _ - : .');
-        }
+        $key = HttpClient::idempotencyKey($options['idempotency_key'] ?? null);
         $preferAsync = $options['prefer_async'] ?? false;
         if (!is_bool($preferAsync)) {
             throw new InvalidArgumentException('prefer_async must be a boolean');

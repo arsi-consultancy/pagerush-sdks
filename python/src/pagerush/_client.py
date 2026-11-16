@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 from ._errors import PageRushConnectionError, PageRushError, validation_error
 from ._http import HTTPRequest, HTTPResponse, Transport, is_timeout, urllib_transport
-from ._resources import Jobs, Templates
+from ._resources import Batches, Jobs, Templates
 from ._types import ErrorItem
 from ._version import __version__
 from .webhooks import Webhooks
@@ -33,9 +33,10 @@ _MAX_RETRY_AFTER_VALUE = 86_400 * 365
 _DELTA_SECONDS = re.compile(r"([0-9]+)(?:\.([0-9]+))?")
 _BAD_KEY_CHARS = re.compile(r"[\s\x00-\x1f\x7f]")
 
-RetryPolicy = Literal["idempotent", "render", "unsafe"]
-"""How a request may be retried: ``idempotent`` (GET, DELETE), ``render`` (POST with an
-idempotency key) or ``unsafe`` (other POST and PATCH: only when the server rejected it up front)."""
+RetryPolicy = Literal["idempotent", "render", "batch", "unsafe"]
+"""How a request may be retried: ``idempotent`` (GET, DELETE), ``render`` (render POST with an
+idempotency key, also on 409 ``CONFLICT``), ``batch`` (batch create POST with an idempotency key)
+or ``unsafe`` (other POST and PATCH: only when the server rejected it up front)."""
 
 
 def _parse_retry_after(value: Optional[str]) -> Optional[int]:
@@ -138,6 +139,7 @@ class PageRush:
     Attributes:
         templates: :class:`pagerush.Templates`.
         jobs: :class:`pagerush.Jobs`.
+        batches: :class:`pagerush.Batches`.
         webhooks: :class:`pagerush.Webhooks` (the same functions as :mod:`pagerush.webhooks`).
     """
 
@@ -172,6 +174,7 @@ class PageRush:
         self._random: Callable[[], float] = random.random
         self.templates = Templates(self)
         self.jobs = Jobs(self)
+        self.batches = Batches(self)
         self.webhooks = Webhooks()
 
     def __repr__(self) -> str:

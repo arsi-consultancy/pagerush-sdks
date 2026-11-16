@@ -1,5 +1,7 @@
 /**
  * Receives callback_url deliveries with plain node:http, verifies the signature and saves PDFs.
+ * Also handles a batch's `batch.completed` notice by downloading the batch's ZIP (that needs
+ * PAGERUSH_API_KEY; without it, batch notices are only logged).
  *
  *   PAGERUSH_WEBHOOK_SECRET=whsec_... npx tsx examples/webhook-receiver.ts
  *
@@ -7,7 +9,7 @@
  */
 import { writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
-import { constructEvent, WebhookVerificationError } from "pagerush";
+import { constructEvent, PageRush, WebhookVerificationError } from "pagerush";
 
 const secret = process.env.PAGERUSH_WEBHOOK_SECRET;
 if (!secret) {
@@ -15,11 +17,13 @@ if (!secret) {
   process.exit(1);
 }
 
+const client = process.env.PAGERUSH_API_KEY ? new PageRush() : null;
+
 // Delivery is at-least-once. Use a database in production; a Set is enough for a demo.
 const processed = new Set<string>();
 
-/** Job ids are short and URL-safe; check before using one in a file name. */
-const JOB_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** Job and batch ids are short and URL-safe; check before using one in a file name. */
+const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** The exact bytes received. Never verify a re-serialised JSON.parse result. */
 async function rawBody(req: IncomingMessage): Promise<Uint8Array> {
@@ -35,26 +39,34 @@ const server = createServer(async (req, res) => {
   }
   try {
     const event = await constructEvent(await rawBody(req), req.headers, secret);
-    if (!JOB_ID.test(event.job_id)) {
-      res.writeHead(400).end("unexpected job id");
+    // Job deliveries carry job_id; a batch's batch.completed carries batch_id instead.
+    const id = event.job_id ?? event.batch_id ?? "";
+    if (!ID.test(id)) {
+      res.writeHead(400).end("unexpected id");
       return;
     }
-    if (processed.has(event.job_id)) {
+    if (processed.has(id)) {
       res.writeHead(200).end("duplicate");
       return;
     }
 
     if (event.event === "pdf.succeeded" && event.pdf) {
-      const file = `${event.job_id}.pdf`;
+      const file = `${id}.pdf`;
       await writeFile(file, event.pdf);
       console.log(`Saved ${file}`);
     } else if (event.event === "pdf.failed") {
-      console.error(
-        `Job ${event.job_id} failed: ${event.failure?.error.code}: ${event.failure?.error.message}`,
-      );
+      console.error(`Job ${id} failed: ${event.failure?.error.code}: ${event.failure?.error.message}`);
+    } else if (event.event === "batch.completed" && event.batch) {
+      const { status, succeeded, failed } = event.batch;
+      console.log(`Batch ${id} ${status}: ${succeeded} succeeded, ${failed} failed`);
+      if (client && succeeded > 0) {
+        const file = `${id}.zip`;
+        await writeFile(file, await client.batches.downloadZip(id));
+        console.log(`Saved ${file}`);
+      }
     }
     // Only now: if the work above threw, PageRush retries the delivery and we try again.
-    processed.add(event.job_id);
+    processed.add(id);
     res.writeHead(200).end("ok");
   } catch (err) {
     if (err instanceof WebhookVerificationError) {

@@ -31,7 +31,7 @@ use PageRush\Transport\Transport;
  * - `max_retries` (int): retries after the first attempt. Default 2.
  * - `transport` ({@see Transport}): sends HTTP requests. Default {@see CurlTransport}.
  * - `sleep` (callable(float): void): waits between retries and polls. Default `usleep`.
- * - `clock` (callable(): float): current time in seconds, used by {@see Jobs::wait()}. Default `microtime(true)`.
+ * - `clock` (callable(): float): current time in seconds, used by {@see Jobs::wait()} and {@see Batches::wait()}. Default `microtime(true)`.
  */
 final class PageRush
 {
@@ -48,6 +48,8 @@ final class PageRush
     public readonly Templates $templates;
     /** Render job endpoints. */
     public readonly Jobs $jobs;
+    /** Batch render endpoints. */
+    public readonly Batches $batches;
     /** Webhook verification helpers (also available statically on {@see Webhook}). */
     public readonly Webhooks $webhooks;
 
@@ -106,6 +108,7 @@ final class PageRush
         $http = new HttpClient($apiKey, $baseUrl, (float) $timeout, $maxRetries, $transport, $sleep, $clock);
         $this->templates = new Templates($http);
         $this->jobs = new Jobs($http);
+        $this->batches = new Batches($http);
         $this->webhooks = new Webhooks();
     }
 
@@ -116,7 +119,7 @@ final class PageRush
      */
     public function __debugInfo(): array
     {
-        return ['templates' => $this->templates, 'jobs' => $this->jobs, 'webhooks' => $this->webhooks];
+        return ['templates' => $this->templates, 'jobs' => $this->jobs, 'batches' => $this->batches, 'webhooks' => $this->webhooks];
     }
 
     private static function env(string $name): ?string

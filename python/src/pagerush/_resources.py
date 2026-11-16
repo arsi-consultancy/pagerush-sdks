@@ -1,4 +1,4 @@
-"""API resources: templates and jobs."""
+"""API resources: templates, jobs and batches."""
 
 from __future__ import annotations
 
@@ -7,23 +7,32 @@ import re
 import urllib.parse
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, Iterator, Mapping, Optional, Sequence, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, Mapping, Optional, Sequence, Union, cast
 
 from ._errors import PageRushError, validation_error
-from ._types import Job, Template, TemplateFile, TemplateList, TemplateVersion, TemplateWithVersion
+from ._types import Batch, Job, Template, TemplateFile, TemplateList, TemplateVersion, TemplateWithVersion
 
 if TYPE_CHECKING:
     from ._client import PageRush
 
-__all__ = ["Jobs", "RenderResult", "Templates"]
+__all__ = ["Batches", "Jobs", "RenderResult", "Templates"]
 
 _FINAL_STATUSES = ("succeeded", "failed")
+_BATCH_FINAL_STATUSES = ("succeeded", "partial", "failed")
 _FILENAME = re.compile(r'filename="([^"]*)"')
 _IDEMPOTENCY_KEY = re.compile(r"[A-Za-z0-9_\-:.]{1,255}")
 
 
 def _seg(value: Union[str, int]) -> str:
     return urllib.parse.quote(str(value), safe="")
+
+
+def _idempotency_key(key: Optional[str]) -> str:
+    """Return ``key``, or a new UUID v4 if it is ``None``, after checking the server's rule."""
+    value = str(uuid.uuid4()) if key is None else key
+    if not _IDEMPOTENCY_KEY.fullmatch(value):
+        raise validation_error("idempotency_key must be 1-255 characters from A-Z a-z 0-9 _ - : .")
+    return value
 
 
 def _int_header(value: Optional[str]) -> Optional[int]:
@@ -308,10 +317,7 @@ class Templates:
             body["delete_after_download"] = delete_after_download
         if callback_url is not None:
             body["callback_url"] = callback_url
-        key = str(uuid.uuid4()) if idempotency_key is None else idempotency_key
-        if not _IDEMPOTENCY_KEY.fullmatch(key):
-            raise validation_error("idempotency_key must be 1-255 characters from A-Z a-z 0-9 _ - : .")
-        headers = {"Idempotency-Key": key}
+        headers = {"Idempotency-Key": _idempotency_key(idempotency_key)}
         if prefer_async:
             headers["Prefer"] = "respond-async"
         response = self._client._request(
@@ -412,4 +418,125 @@ class Jobs:
         if url.startswith("/"):
             url = self._client.base_url + url
         response = self._client._request("GET", url, absolute=True, auth=False, accept="application/pdf")
+        return response.body
+
+
+class Batches:
+    """Batch endpoints (``/v1/templates/{id}/batches``, ``/v1/batches``). Use it as ``client.batches``.
+
+    A batch renders one template once per item (up to 1,000 items) in the background and collects
+    the PDFs in a ZIP.
+    """
+
+    def __init__(self, client: PageRush) -> None:
+        self._client = client
+
+    def create(
+        self,
+        template_id: str,
+        *,
+        items: Iterable[Mapping[str, Any]],
+        version: Optional[int] = None,
+        metadata: Optional[Mapping[str, str]] = None,
+        delete_after_download: Optional[bool] = None,
+        callback_url: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Batch:
+        """Queue a batch of renders of one template.
+
+        Every call sends an ``Idempotency-Key`` (a random UUID unless you pass one) and reuses it on
+        retries, so a retried request never creates or charges for a second batch. The server
+        refuses a batch your quota and credits cannot cover (402 ``QUOTA_EXCEEDED``) and a fourth
+        unfinished batch (429 ``CONCURRENCY_LIMIT``); the SDK does not split batches.
+
+        Args:
+            template_id: The template.
+            items: 1-1,000 items shaped like :class:`pagerush.BatchItemInput`:
+                ``{"data": <any JSON>, "filename": "optional-name"}``. Any iterable works, such as a
+                generator over CSV rows.
+            version: Render this version instead of the live one.
+            metadata: Up to 20 string pairs (at most 4 KB as JSON), echoed on the batch and in the
+                ``batch.completed`` webhook.
+            delete_after_download: Delete the items' PDFs after the first complete ZIP download.
+            callback_url: POST a signed ``batch.completed`` notice to this https URL when the batch
+                finishes.
+            idempotency_key: Your own key: 1-255 characters from ``A-Z a-z 0-9 _ - : .``.
+
+        Returns:
+            The queued :class:`pagerush.Batch` (without ``items``).
+
+        Raises:
+            PageRushError: On an API error, or with code ``VALIDATION_FAILED`` (status 0, nothing
+                sent) if ``idempotency_key`` is invalid or the body cannot be encoded as JSON.
+        """
+        body: Dict[str, Any] = {"items": [dict(item) for item in items]}
+        if version is not None:
+            body["version"] = version
+        if metadata is not None:
+            body["metadata"] = dict(metadata)
+        if delete_after_download is not None:
+            body["delete_after_download"] = delete_after_download
+        if callback_url is not None:
+            body["callback_url"] = callback_url
+        headers = {"Idempotency-Key": _idempotency_key(idempotency_key)}
+        response = self._client._request(
+            "POST",
+            f"/v1/templates/{_seg(template_id)}/batches",
+            json_body=body,
+            has_body=True,
+            headers=headers,
+            retry="batch",
+        )
+        return cast(Batch, self._client._json_object(response, ("id", "status")))
+
+    def get(self, batch_id: str) -> Batch:
+        """Get a batch's status and counts, with its ``items``."""
+        response = self._client._request("GET", f"/v1/batches/{_seg(batch_id)}")
+        return cast(Batch, self._client._json_object(response, ("id", "status")))
+
+    def wait(self, batch_id: str, *, timeout: float = 600.0, interval: float = 2.0) -> Batch:
+        """Poll a batch until its status is ``succeeded``, ``partial`` or ``failed`` and return it.
+
+        A partial or failed batch is returned, not raised; check ``batch["status"]``,
+        ``batch["failed"]`` and each item's ``error``.
+
+        Args:
+            batch_id: The batch.
+            timeout: Give up after this many seconds.
+            interval: Seconds between polls.
+
+        Raises:
+            PageRushError: Code ``WAIT_TIMEOUT`` (status 0) if the batch is not finished in time.
+        """
+        clock = self._client._clock
+        deadline = clock() + timeout
+        while True:
+            batch = self.get(batch_id)
+            if batch["status"] in _BATCH_FINAL_STATUSES:
+                return batch
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise PageRushError(
+                    status=0,
+                    code="WAIT_TIMEOUT",
+                    message=f"WAIT_TIMEOUT: batch {batch_id} was still {batch['status']} after {timeout}s",
+                )
+            self._client._sleep(min(interval, remaining))
+
+    def download_zip(self, batch_id: str) -> bytes:
+        """Download a finished batch's ZIP of PDFs (one file per succeeded item).
+
+        Unlike a job's signed ``download_url``, this request sends your API key.
+
+        Raises:
+            PageRushError: Code ``CONFLICT`` (409, with ``retry_after``) while the batch is still
+                rendering; ``FILE_EXPIRED`` (410) when no PDFs are left; ``INVALID_RESPONSE`` if a
+                200 response is not ``application/zip``.
+        """
+        response = self._client._request("GET", f"/v1/batches/{_seg(batch_id)}/zip", accept="application/zip")
+        content_type = (response.header("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type != "application/zip":
+            raise self._client._invalid_response(
+                response, f"Expected an application/zip body, got {content_type or 'no Content-Type'}"
+            )
         return response.body

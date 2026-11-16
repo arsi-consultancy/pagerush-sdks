@@ -16,8 +16,12 @@ from ._client import DEFAULT_BASE_URL, PageRush
 from ._errors import PageRushConnectionError, PageRushError, WebhookVerificationError
 from ._files import TEXT_EXTENSIONS, file_from_path, template_file
 from ._http import HTTPRequest, HTTPResponse, Transport, urllib_transport
-from ._resources import Jobs, RenderResult, Templates
+from ._resources import Batches, Jobs, RenderResult, Templates
 from ._types import (
+    Batch,
+    BatchItem,
+    BatchItemInput,
+    BatchStatus,
     ErrorItem,
     Job,
     JobDelivery,
@@ -36,6 +40,11 @@ from .webhooks import WebhookEvent, Webhooks
 __all__ = [
     "DEFAULT_BASE_URL",
     "TEXT_EXTENSIONS",
+    "Batch",
+    "BatchItem",
+    "BatchItemInput",
+    "BatchStatus",
+    "Batches",
     "ErrorItem",
     "HTTPRequest",
     "HTTPResponse",

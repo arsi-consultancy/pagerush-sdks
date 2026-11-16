@@ -9,6 +9,10 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 __all__ = [
+    "Batch",
+    "BatchItem",
+    "BatchItemInput",
+    "BatchStatus",
     "ErrorItem",
     "Job",
     "JobDelivery",
@@ -24,6 +28,9 @@ __all__ = [
 
 JobStatus = Literal["queued", "rendering", "succeeded", "failed"]
 """A job's status. ``succeeded`` and ``failed`` are final."""
+
+BatchStatus = Literal["queued", "rendering", "succeeded", "partial", "failed"]
+"""A batch's status. ``succeeded``, ``partial`` (some items failed) and ``failed`` are final."""
 
 
 class ErrorItem(TypedDict):
@@ -142,3 +149,62 @@ class Job(TypedDict):
     delete_after_download: bool
     created_at: str
     completed_at: Optional[str]
+
+
+class _BatchItemInputBase(TypedDict):
+    data: Any
+
+
+class BatchItemInput(_BatchItemInputBase, total=False):
+    """One item to render in :meth:`Batches.create`: the template data and an optional file name.
+
+    ``filename`` names the PDF inside the batch's ZIP; the server makes it safe, adds ``.pdf`` and
+    removes duplicates.
+    """
+
+    filename: str
+
+
+class BatchItem(TypedDict):
+    """One item of a batch as returned by :meth:`Batches.get`.
+
+    ``index`` is the item's position in the ``items`` you sent. ``renders`` is the number of
+    renders it used (0 unless it succeeded). ``error`` is set when the item failed.
+    """
+
+    index: Optional[int]
+    job_id: str
+    status: JobStatus
+    filename: Optional[str]
+    bytes: Optional[int]
+    renders: int
+    error: Optional[JobError]
+
+
+class _BatchBase(TypedDict):
+    id: str
+    status: BatchStatus
+    template_id: Optional[str]
+    template_version: Optional[int]
+    item_count: int
+    succeeded: int
+    failed: int
+    zip_url: Optional[str]
+    expires_at: str
+    metadata: Optional[Dict[str, str]]
+    delete_after_download: bool
+    delivery: Optional[JobDelivery]
+    created_at: str
+    finished_at: Optional[str]
+
+
+class Batch(_BatchBase, total=False):
+    """A batch of renders of one template.
+
+    ``zip_url`` is the API URL of the batch's ZIP of PDFs, set once the batch has finished with at
+    least one PDF that is still kept. Fetching it needs your API key; use
+    :meth:`Batches.download_zip`. ``items`` is present only on :meth:`Batches.get` (and
+    :meth:`Batches.wait`), not on :meth:`Batches.create` or in the ``batch.completed`` webhook.
+    """
+
+    items: List[BatchItem]

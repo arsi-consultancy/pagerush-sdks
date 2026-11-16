@@ -70,7 +70,7 @@ def pdf_response(headers: dict[str, str] | None = None) -> HTTPResponse:
 
 
 def test_installed_metadata_version_matches() -> None:
-    assert importlib.metadata.version("pagerush") == pagerush.__version__ == "0.1.0"
+    assert importlib.metadata.version("pagerush") == pagerush.__version__ == "0.2.0"
 
 
 def test_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,7 +97,7 @@ def test_auth_user_agent_accept(make_client: Any) -> None:
     client.templates.list()
     req = t.last
     assert req.headers["Authorization"] == "Bearer pk_test_123"
-    assert req.headers["User-Agent"] == "pagerush-python/0.1.0"
+    assert req.headers["User-Agent"] == "pagerush-python/0.2.0"
     assert req.headers["Accept"] == "application/json"
     assert "Content-Type" not in req.headers
     assert req.body is None
@@ -507,6 +507,205 @@ def test_jobs_download_expired(make_client: Any) -> None:
     with pytest.raises(PageRushError) as info:
         client.jobs.download("job_1")
     assert info.value.code == "FILE_EXPIRED"
+    assert len(t.requests) == 1
+
+
+# -- batches ----------------------------------------------------------------------------------
+
+BATCH = {
+    "id": "bat_1",
+    "status": "queued",
+    "template_id": "tpl_1",
+    "template_version": 3,
+    "item_count": 2,
+    "succeeded": 0,
+    "failed": 0,
+    "zip_url": None,
+    "expires_at": "2026-11-17T00:00:00.000Z",
+    "metadata": {"run": "nightly"},
+    "delete_after_download": False,
+    "delivery": None,
+    "created_at": "2026-11-16T00:00:00.000Z",
+    "finished_at": None,
+}
+BATCH_ITEMS = [
+    {
+        "index": 0,
+        "job_id": "job_a",
+        "status": "succeeded",
+        "filename": "a.pdf",
+        "bytes": 1200,
+        "renders": 1,
+        "error": None,
+    },
+    {
+        "index": 1,
+        "job_id": "job_b",
+        "status": "failed",
+        "filename": "b.pdf",
+        "bytes": None,
+        "renders": 0,
+        "error": {"code": "INVALID_DATA", "message": "bad"},
+    },
+]
+
+
+def zip_response(body: bytes = b"PK\x03\x04data", content_type: str = "application/zip") -> HTTPResponse:
+    return HTTPResponse(status=200, headers={"Content-Type": content_type}, body=body)
+
+
+def test_batches_create_path_body_and_key(make_client: Any) -> None:
+    client, t = make_client(json_response(202, BATCH))
+    batch = client.batches.create(
+        "tpl/1",
+        items=({"data": {"n": i}, "filename": f"inv-{i}"} if i else {"data": {"n": i}} for i in range(2)),
+        version=3,
+        metadata={"run": "nightly"},
+        delete_after_download=True,
+        callback_url="https://example.com/hook",
+    )
+    assert batch["id"] == "bat_1"
+    req = t.last
+    assert (req.method, req.url) == ("POST", "https://api.test/v1/templates/tpl%2F1/batches")
+    assert req.headers["Authorization"] == "Bearer pk_test_123"
+    assert req.headers["Content-Type"] == "application/json"
+    assert req.headers["Accept"] == "application/json"
+    assert t.json_body() == {
+        "items": [{"data": {"n": 0}}, {"data": {"n": 1}, "filename": "inv-1"}],
+        "version": 3,
+        "metadata": {"run": "nightly"},
+        "delete_after_download": True,
+        "callback_url": "https://example.com/hook",
+    }
+    assert uuid.UUID(req.headers["Idempotency-Key"]).version == 4
+    assert "Prefer" not in req.headers
+
+
+def test_batches_create_minimal_body_and_own_key(make_client: Any) -> None:
+    client, t = make_client(json_response(202, BATCH))
+    client.batches.create("tpl_1", items=[{"data": {}}], idempotency_key="nightly:2026-11-16")
+    assert t.json_body() == {"items": [{"data": {}}]}
+    assert t.last.headers["Idempotency-Key"] == "nightly:2026-11-16"
+
+
+def test_batches_create_key_reused_across_retries(make_client: Any, sleeps: Any) -> None:
+    client, t = make_client(
+        PageRushConnectionError("CONNECTION_ERROR", "reset"),
+        json_response(502, problem(502, "INTERNAL")),
+        json_response(202, BATCH),
+    )
+    assert client.batches.create("tpl_1", items=[{"data": {}}])["id"] == "bat_1"
+    keys = {r.headers["Idempotency-Key"] for r in t.requests}
+    assert len(t.requests) == 3 and len(keys) == 1
+    assert len(sleeps) == 2
+
+
+@pytest.mark.parametrize("code", ["IDEMPOTENCY_CONFLICT", "CONFLICT"])
+def test_batches_create_not_retried_on_409(make_client: Any, code: str) -> None:
+    client, t = make_client(json_response(409, problem(409, code), {"Retry-After": "2"}))
+    with pytest.raises(PageRushError) as info:
+        client.batches.create("tpl_1", items=[{"data": {}}])
+    assert info.value.code == code
+    assert len(t.requests) == 1
+
+
+@pytest.mark.parametrize("status,code", [(402, "QUOTA_EXCEEDED"), (429, "CONCURRENCY_LIMIT")])
+def test_batches_create_refusals_raise(make_client: Any, status: int, code: str) -> None:
+    client, _ = make_client(*[json_response(status, problem(status, code)) for _ in range(3)])
+    with pytest.raises(PageRushError) as info:
+        client.batches.create("tpl_1", items=[{"data": {}}])
+    assert (info.value.status, info.value.code) == (status, code)
+
+
+def test_batches_create_invalid_key_sends_nothing(make_client: Any) -> None:
+    client, t = make_client()
+    with pytest.raises(PageRushError) as info:
+        client.batches.create("tpl_1", items=[{"data": {}}], idempotency_key="has space")
+    assert (info.value.status, info.value.code) == (0, "VALIDATION_FAILED")
+    assert t.requests == []
+
+
+def test_batches_get(make_client: Any) -> None:
+    done = dict(BATCH, status="partial", succeeded=1, failed=1, items=BATCH_ITEMS)
+    client, t = make_client(json_response(200, done))
+    batch = client.batches.get("bat_1")
+    assert (t.last.method, t.last.url) == ("GET", "https://api.test/v1/batches/bat_1")
+    assert t.last.body is None
+    assert batch["items"][1]["error"] == {"code": "INVALID_DATA", "message": "bad"}
+
+
+def test_batches_get_invalid_body(make_client: Any) -> None:
+    client, _ = make_client(json_response(200, {"items": []}))
+    with pytest.raises(PageRushError) as info:
+        client.batches.get("bat_1")
+    assert info.value.code == "INVALID_RESPONSE"
+
+
+def test_batches_wait(make_client: Any, sleeps: Any) -> None:
+    client, t = make_client(
+        json_response(200, dict(BATCH, items=[])),
+        json_response(200, dict(BATCH, status="rendering", items=[])),
+        json_response(200, dict(BATCH, status="succeeded", succeeded=2, items=BATCH_ITEMS)),
+    )
+    batch = client.batches.wait("bat_1", interval=0.5)
+    assert batch["status"] == "succeeded"
+    assert len(t.requests) == 3
+    assert sleeps == [0.5, 0.5]
+
+
+@pytest.mark.parametrize("status", ["partial", "failed"])
+def test_batches_wait_returns_partial_and_failed(make_client: Any, status: str) -> None:
+    client, _ = make_client(json_response(200, dict(BATCH, status=status, items=[])))
+    assert client.batches.wait("bat_1")["status"] == status
+
+
+def test_batches_wait_default_interval(make_client: Any, sleeps: Any) -> None:
+    client, _ = make_client(json_response(200, BATCH), json_response(200, dict(BATCH, status="succeeded")))
+    client.batches.wait("bat_1")
+    assert sleeps == [2.0]
+
+
+def test_batches_wait_timeout(make_client: Any) -> None:
+    client, _ = make_client(*[json_response(200, BATCH) for _ in range(4)])
+    now = [0.0]
+    client._clock = lambda: now[0]
+    client._sleep = lambda s: now.__setitem__(0, now[0] + s)
+    with pytest.raises(PageRushError) as info:
+        client.batches.wait("bat_1", timeout=5, interval=2)
+    assert (info.value.status, info.value.code) == (0, "WAIT_TIMEOUT")
+    assert not isinstance(info.value, PageRushConnectionError)
+
+
+def test_batches_download_zip_with_auth(make_client: Any) -> None:
+    client, t = make_client(zip_response(content_type="Application/Zip; charset=binary"))
+    assert client.batches.download_zip("bat 1") == b"PK\x03\x04data"
+    assert (t.last.method, t.last.url) == ("GET", "https://api.test/v1/batches/bat%201/zip")
+    assert t.last.headers["Authorization"] == "Bearer pk_test_123"
+    assert t.last.headers["Accept"] == "application/zip"
+    assert len(t.requests) == 1
+
+
+@pytest.mark.parametrize("content_type", ["application/json", ""])
+def test_batches_download_zip_rejects_non_zip(make_client: Any, content_type: str) -> None:
+    client, _ = make_client(zip_response(b'{"ok":true}', content_type))
+    with pytest.raises(PageRushError) as info:
+        client.batches.download_zip("bat_1")
+    assert (info.value.status, info.value.code) == (200, "INVALID_RESPONSE")
+
+
+def test_batches_download_zip_still_rendering(make_client: Any, sleeps: Any) -> None:
+    client, t = make_client(json_response(409, problem(409, "CONFLICT"), {"Retry-After": "5"}))
+    with pytest.raises(PageRushError) as info:
+        client.batches.download_zip("bat_1")
+    assert (info.value.status, info.value.code, info.value.retry_after) == (409, "CONFLICT", 5)
+    assert len(t.requests) == 1 and sleeps == []
+
+
+def test_batches_download_zip_expired(make_client: Any) -> None:
+    client, t = make_client(json_response(410, problem(410, "FILE_EXPIRED")))
+    with pytest.raises(PageRushError) as info:
+        client.batches.download_zip("bat_1")
+    assert (info.value.status, info.value.code) == (410, "FILE_EXPIRED")
     assert len(t.requests) == 1
 
 

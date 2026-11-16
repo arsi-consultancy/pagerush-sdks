@@ -33,7 +33,18 @@ def test_vectors(case: Dict[str, Any]) -> None:
         event = webhooks.construct_event(body, lowered, secrets, **kwargs)
         assert event.timestamp == timestamp
         assert event.event == headers["X-PageRush-Event"]
+        if event.event == "batch.completed":
+            assert event.job_id is None
+            assert event.batch_id == headers["X-PageRush-Batch-Id"]
+            assert event.batch == json.loads(body)["batch"]
+            assert event.pdf is None and event.failure is None
+            if "X-PageRush-Metadata" in headers:
+                assert event.metadata == json.loads(headers["X-PageRush-Metadata"])
+            else:
+                assert event.metadata is None
+            return
         assert event.job_id == headers["X-PageRush-Job-Id"]
+        assert event.batch_id is None and event.batch is None
         if event.event == "pdf.succeeded":
             assert event.pdf == body and event.failure is None
             if "X-PageRush-Metadata" in headers:
@@ -66,13 +77,14 @@ def sign(
     job_id: str = "job_1",
     metadata: Optional[str] = None,
     secret: str = SECRET,
+    id_header: str = "X-PageRush-Job-Id",
 ) -> Dict[str, str]:
     signed = f"{t}\n{event}\n{job_id}\n{metadata or ''}\n".encode() + body
     digest = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
     headers = {
         "X-PageRush-Signature": f"t={t},v2={digest}",
         "X-PageRush-Event": event,
-        "X-PageRush-Job-Id": job_id,
+        id_header: job_id,
     }
     if metadata is not None:
         headers["X-PageRush-Metadata"] = metadata
@@ -207,3 +219,80 @@ def test_construct_event_unknown_event_keeps_name() -> None:
 def test_webhook_error_pickles() -> None:
     err = pickle.loads(pickle.dumps(WebhookVerificationError("timestamp", "too old")))
     assert (err.reason, err.message, str(err)) == ("timestamp", "too old", "too old")
+
+
+# -- batch.completed ----------------------------------------------------------------------------
+
+BATCH = {
+    "id": "bat_1",
+    "status": "partial",
+    "template_id": "tpl_1",
+    "template_version": 3,
+    "item_count": 2,
+    "succeeded": 1,
+    "failed": 1,
+    "zip_url": "https://api.test/v1/batches/bat_1/zip",
+    "expires_at": "2026-11-17T00:00:00.000Z",
+    "metadata": {"run": "nightly"},
+    "delete_after_download": False,
+    "delivery": {"status": "pending", "attempts": 0, "error": None},
+    "created_at": "2026-11-16T00:00:00.000Z",
+    "finished_at": "2026-11-16T00:01:00.000Z",
+}
+
+
+def sign_batch(
+    body: bytes, t: int = 10, batch_id: str = "bat_1", metadata: Optional[str] = None
+) -> Dict[str, str]:
+    return sign(
+        body, t, event="batch.completed", job_id=batch_id, metadata=metadata, id_header="X-PageRush-Batch-Id"
+    )
+
+
+def test_construct_event_batch_completed() -> None:
+    body = json.dumps({"event": "batch.completed", "batch": BATCH}).encode()
+    headers = sign_batch(body, metadata='{"run":"nightly"}')
+    event = webhooks.construct_event(body, headers, SECRET, now=10)
+    assert event == pagerush.WebhookEvent(
+        event="batch.completed",
+        job_id=None,
+        timestamp=10,
+        pdf=None,
+        failure=None,
+        metadata={"run": "nightly"},
+        batch_id="bat_1",
+        batch=BATCH,
+    )
+
+
+def test_construct_event_batch_completed_metadata_from_header_only() -> None:
+    body = json.dumps({"event": "batch.completed", "batch": BATCH}).encode()
+    event = webhooks.construct_event(body, sign_batch(body), SECRET, now=10)
+    assert event.metadata is None
+    assert event.batch is not None and event.batch["metadata"] == {"run": "nightly"}
+
+
+@pytest.mark.parametrize(
+    "body", [b"not json", b"[1]", b'{"event": "batch.completed"}', b'{"batch": [1]}', b'{"batch": null}']
+)
+def test_construct_event_batch_completed_bad_body_is_header_error(body: bytes) -> None:
+    webhooks.verify(body, sign_batch(body), SECRET, now=10)  # the signature itself is fine
+    with pytest.raises(WebhookVerificationError) as info:
+        webhooks.construct_event(body, sign_batch(body), SECRET, now=10)
+    assert info.value.reason == "header"
+
+
+def test_batch_completed_needs_batch_id_header() -> None:
+    body = json.dumps({"event": "batch.completed", "batch": BATCH}).encode()
+    headers = sign(body, 10, event="batch.completed", job_id="bat_1")  # signed, but sent as a job id
+    with pytest.raises(WebhookVerificationError) as info:
+        webhooks.verify(body, headers, SECRET, now=10)
+    assert info.value.reason == "header"
+
+
+def test_pdf_events_ignore_batch_id_header() -> None:
+    body = b"%PDF-"
+    headers = sign(body, 10, job_id="bat_1", id_header="X-PageRush-Batch-Id")
+    with pytest.raises(WebhookVerificationError) as info:
+        webhooks.verify(body, headers, SECRET, now=10)
+    assert info.value.reason == "header"

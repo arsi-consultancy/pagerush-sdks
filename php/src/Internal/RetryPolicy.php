@@ -22,6 +22,12 @@ enum RetryPolicy
      */
     case Render;
 
+    /**
+     * Batch create, which always carries an idempotency key: connection errors, 429, 502, 503, 504, as
+     * {@see self::Idempotent}. Not 409 (`CONFLICT` or `IDEMPOTENCY_CONFLICT`).
+     */
+    case BatchCreate;
+
     /** Other POST and PATCH requests: only 429 and 503, which the API returns before doing any work. */
     case NonIdempotent;
 
@@ -33,7 +39,7 @@ enum RetryPolicy
     public function allowsStatusRetry(int $status, string $errorCode): bool
     {
         return match ($this) {
-            self::Idempotent => in_array($status, [429, 502, 503, 504], true),
+            self::Idempotent, self::BatchCreate => in_array($status, [429, 502, 503, 504], true),
             self::Render => in_array($status, [429, 502, 503, 504], true)
                 || ($status === 409 && $errorCode === ErrorCode::CONFLICT),
             self::NonIdempotent => $status === 429 || $status === 503,

@@ -44,7 +44,7 @@ final class ErrorCode
     public const CONNECTION_ERROR = 'CONNECTION_ERROR';
     /** An HTTP attempt took longer than the `timeout` option ({@see Exception\ConnectionException}). */
     public const TIMEOUT = 'TIMEOUT';
-    /** {@see Jobs::wait()} gave up before the job finished. */
+    /** {@see Jobs::wait()} or {@see Batches::wait()} gave up before the job or batch finished. */
     public const WAIT_TIMEOUT = 'WAIT_TIMEOUT';
 
     private function __construct()

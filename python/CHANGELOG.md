@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+### Added
+
+- Batches: `client.batches.create` (`POST /v1/templates/{id}/batches`, 1-1,000 items of `{data, filename?}`, with
+  `version`, `metadata`, `delete_after_download`, `callback_url` and an automatic `Idempotency-Key` reused across
+  retries), `get`, `wait` (polls until `succeeded`, `partial` or `failed`; `WAIT_TIMEOUT` when it gives up) and
+  `download_zip` (sends the API key; a 200 that is not `application/zip` raises `INVALID_RESPONSE`).
+- `Batch`, `BatchItem`, `BatchItemInput` and `BatchStatus` types.
+- Batch creation is retried on connection errors, timeouts, 429, 502, 503 and 504, never on `IDEMPOTENCY_CONFLICT`.
+- Webhooks: `batch.completed` deliveries. `verify` reads `X-PageRush-Batch-Id` instead of `X-PageRush-Job-Id` for
+  that event; `construct_event` returns `batch_id` and `batch` (with `job_id` set to `None`). New constants
+  `BATCH_ID_HEADER` and `BATCH_COMPLETED`.
+- `examples/batch.py`; the webhook receiver example handles `batch.completed`.
+
+### Changed
+
+- `WebhookEvent.job_id` is typed `Optional[str]`: it is `None` for `batch.completed`. `WebhookEvent` gains
+  `batch_id` and `batch` fields (both default to `None`).
+
 ## [0.1.0] - 2026-11-09
 
 ### Added
@@ -39,5 +59,6 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
   are not valid UTF-8).
 - Type hints throughout (PEP 561 `py.typed`), examples, and an offline test suite.
 
-[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/python-v0.1.0...HEAD
+[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/python-v0.2.0...HEAD
+[0.2.0]: https://github.com/arsi-consultancy/pagerush-sdks/compare/python-v0.1.0...python-v0.2.0
 [0.1.0]: https://github.com/arsi-consultancy/pagerush-sdks/releases/tag/python-v0.1.0

@@ -7,6 +7,28 @@ package follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+### Added
+
+- Batch renders as `$client->batches`: `create` (one template, 1-1,000 data records, from an array or
+  any iterable; always sends an `Idempotency-Key`, generated when you don't pass one and reused across
+  retries), `get` (with per-item `job_id`, `status`, `filename`, `bytes`, `renders` and `error`),
+  `wait` (polls until `succeeded`, `partial` or `failed`; defaults 600 s and 2 s) and `downloadZip`
+  (sends the API key and checks that the response is `application/zip`).
+- Batch create is retried on connection errors, timeouts, 429, 502, 503 and 504, never on 409.
+- `batch.completed` webhooks: `Webhook::verify()` checks the `X-PageRush-Batch-Id` header in place of
+  `X-PageRush-Job-Id` for that event, and `constructEvent()` returns the batch ID and the body's
+  `batch` object as `WebhookEvent::$batch_id` and `WebhookEvent::$batch`, with the batch's metadata.
+- `WebhookEvent::BATCH_COMPLETED` constant and `Batch`, `BatchItem` and `BatchItemInput` array shapes
+  in `PageRush\Types`.
+- `examples/batch.php`: builds the items from a CSV file, waits for the batch and saves the ZIP.
+
+### Changed
+
+- `WebhookEvent::$job_id` is now `?string`: it is null on `batch.completed`. The webhook receiver
+  example dedupes on `job_id ?? batch_id`.
+
 ## [0.1.0] - 2026-11-09
 
 ### Added
@@ -40,5 +62,6 @@ package follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
   in error messages, and the client refuses to be serialised.
 - Signed download URLs appear in error messages without their query string.
 
-[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/php-v0.1.0...HEAD
+[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/php-v0.2.0...HEAD
+[0.2.0]: https://github.com/arsi-consultancy/pagerush-sdks/compare/php-v0.1.0...php-v0.2.0
 [0.1.0]: https://github.com/arsi-consultancy/pagerush-sdks/releases/tag/php-v0.1.0

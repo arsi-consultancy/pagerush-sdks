@@ -18,6 +18,9 @@ namespace PageRush;
  * @phpstan-type JobError array{code: string|null, message: string|null}
  * @phpstan-type JobDelivery array{status: string|null, attempts: int, error: string|null}
  * @phpstan-type Job array{id: string, status: string, mode: string, region: string, template_id: string|null, template_version: int|null, engine: string|null, bytes: int|null, duration_ms: int|null, error: JobError|null, delivery: JobDelivery|null, metadata: array<string, string>|null, download_url: string|null, delete_after_download: bool, created_at: string, completed_at: string|null}
+ * @phpstan-type BatchItemInput array{data: mixed, filename?: string|null}
+ * @phpstan-type BatchItem array{index: int, job_id: string|null, status: string, filename: string|null, bytes: int|null, renders: int, error: JobError|null}
+ * @phpstan-type Batch array{id: string, status: string, template_id: string, template_version: int|null, item_count: int, succeeded: int, failed: int, zip_url: string|null, expires_at: string|null, metadata: array<string, string>|null, delete_after_download: bool, delivery: JobDelivery|null, created_at: string, finished_at: string|null, items?: list<BatchItem>}
  */
 final class Types
 {

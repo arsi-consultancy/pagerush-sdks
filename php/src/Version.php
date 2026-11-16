@@ -11,7 +11,7 @@ namespace PageRush;
 final class Version
 {
     /** Semantic version of this SDK (not the HTTP API version, which is `v1`). */
-    public const VERSION = '0.1.0';
+    public const VERSION = '0.2.0';
 
     private function __construct()
     {

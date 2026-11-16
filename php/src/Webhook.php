@@ -19,8 +19,9 @@ use PageRush\Exception\WebhookVerificationException;
  * );
  * ```
  *
- * The X-PageRush-Signature header signs the timestamp, the X-PageRush-Event, X-PageRush-Job-Id and
- * X-PageRush-Metadata headers, and the raw body, so every field of a verified event can be trusted.
+ * The X-PageRush-Signature header signs the timestamp, the X-PageRush-Event, X-PageRush-Job-Id (for a
+ * `batch.completed` notice, X-PageRush-Batch-Id) and X-PageRush-Metadata headers, and the raw body, so
+ * every field of a verified event can be trusted.
  *
  * `$headers` is any map of header name to value (or to a list of values), matched without regard to
  * case: `getallheaders()`, `$_SERVER` (`HTTP_X_PAGERUSH_SIGNATURE`), Laravel/Symfony's
@@ -45,8 +46,10 @@ final class Webhook
      * @param string|list<string>               $secrets Your webhook secret, or several (any may match).
      * @param array{tolerance?: int, now?: int} $options `tolerance` in seconds (default 300); `now` as a Unix timestamp (default: time()).
      *
-     * @throws WebhookVerificationException With reason `header` (a missing or malformed signature, event or job ID
-     *                                      header), `timestamp` (outside the tolerance) or `signature` (no match).
+     * @throws WebhookVerificationException With reason `header` (a missing or malformed signature, event or ID
+     *                                      header: `X-PageRush-Batch-Id` for `batch.completed`, else
+     *                                      `X-PageRush-Job-Id`), `timestamp` (outside the tolerance) or
+     *                                      `signature` (no match).
      * @throws InvalidArgumentException    When no secret is given, a secret is empty, or an option is unknown.
      */
     public static function verify(string $rawBody, array $headers, string|array $secrets, array $options = []): void
@@ -63,30 +66,43 @@ final class Webhook
      * @param array{tolerance?: int, now?: int} $options See {@see verify()}.
      *
      * @throws WebhookVerificationException As {@see verify()}, and with reason `header` when a `pdf.failed` body
-     *                                      is not a JSON object.
+     *                                      is not a JSON object, or a `batch.completed` body is not a JSON object
+     *                                      with a `batch` object.
      * @throws InvalidArgumentException    When no secret is given, a secret is empty, or an option is unknown.
      */
     public static function constructEvent(string $rawBody, array $headers, string|array $secrets, array $options = []): WebhookEvent
     {
         $headers = self::normalizeHeaders($headers);
-        [$timestamp, $event, $jobId] = self::verified($rawBody, $headers, $secrets, $options);
+        [$timestamp, $event, $id] = self::verified($rawBody, $headers, $secrets, $options);
 
         $failure = null;
+        $batch = null;
         $metadata = null;
         if ($event === WebhookEvent::FAILED) {
-            $failure = self::decodeFailure($rawBody);
+            $failure = self::decodeObject($rawBody, 'The pdf.failed body is not a JSON object');
             $metadata = self::stringMap($failure['metadata'] ?? null);
-        } elseif ($event === WebhookEvent::SUCCEEDED && isset($headers['x-pagerush-metadata'])) {
+        } elseif ($event === WebhookEvent::BATCH_COMPLETED) {
+            $notice = self::decodeObject($rawBody, 'The batch.completed body is not a JSON object with a batch object');
+            $batch = $notice['batch'] ?? null;
+            if (!is_array($batch) || ($batch !== [] && array_is_list($batch))) {
+                throw self::headerError('The batch.completed body is not a JSON object with a batch object');
+            }
+            /** @var array<string, mixed> $batch */
+        }
+        if (($event === WebhookEvent::SUCCEEDED || $event === WebhookEvent::BATCH_COMPLETED) && isset($headers['x-pagerush-metadata'])) {
             $metadata = self::stringMap(json_decode($headers['x-pagerush-metadata'], true));
         }
+        $isBatch = $event === WebhookEvent::BATCH_COMPLETED;
 
         return new WebhookEvent(
             event: $event,
-            job_id: $jobId,
+            job_id: $isBatch ? null : $id,
             timestamp: $timestamp,
             pdf: $event === WebhookEvent::SUCCEEDED ? $rawBody : null,
             failure: $failure,
             metadata: $metadata,
+            batch_id: $isBatch ? $id : null,
+            batch: $batch,
         );
     }
 
@@ -95,7 +111,7 @@ final class Webhook
      * @param string|array<mixed>               $secrets Typed loosely so a wrong value gets a clear error.
      * @param array{tolerance?: int, now?: int} $options
      *
-     * @return array{int, string, string} The signed timestamp, event and job ID.
+     * @return array{int, string, string} The signed timestamp, event and job ID (batch ID for `batch.completed`).
      */
     private static function verified(string $rawBody, array $headers, string|array $secrets, array $options): array
     {
@@ -134,9 +150,14 @@ final class Webhook
             throw self::headerError('X-PageRush-Signature must have one t of 1-15 digits and at least one v2');
         }
         $event = $headers['x-pagerush-event'] ?? null;
-        $jobId = $headers['x-pagerush-job-id'] ?? null;
-        if ($event === null || $jobId === null) {
-            throw self::headerError('The delivery needs X-PageRush-Event and X-PageRush-Job-Id headers');
+        if ($event === null) {
+            throw self::headerError('The delivery needs an X-PageRush-Event header');
+        }
+        // Only the ID header for this event counts: a batch.completed notice is signed with its batch ID.
+        $idHeader = $event === WebhookEvent::BATCH_COMPLETED ? 'X-PageRush-Batch-Id' : 'X-PageRush-Job-Id';
+        $id = $headers[strtolower($idHeader)] ?? null;
+        if ($id === null) {
+            throw self::headerError(sprintf('A %s delivery needs an %s header', $event, $idHeader));
         }
         $timestamp = (int) $timestamps[0];
 
@@ -147,7 +168,7 @@ final class Webhook
             );
         }
 
-        $signed = $timestamp . "\n" . $event . "\n" . $jobId . "\n" . ($headers['x-pagerush-metadata'] ?? '') . "\n" . $rawBody;
+        $signed = $timestamp . "\n" . $event . "\n" . $id . "\n" . ($headers['x-pagerush-metadata'] ?? '') . "\n" . $rawBody;
         $matched = false;
         foreach ($secrets as $secret) {
             $expected = hash_hmac('sha256', $signed, $secret);
@@ -163,7 +184,7 @@ final class Webhook
             );
         }
 
-        return [$timestamp, $event, $jobId];
+        return [$timestamp, $event, $id];
     }
 
     /**
@@ -171,7 +192,7 @@ final class Webhook
      *
      * @throws WebhookVerificationException With reason `header` when the body is not a JSON object.
      */
-    private static function decodeFailure(string $rawBody): array
+    private static function decodeObject(string $rawBody, string $problem): array
     {
         try {
             $decoded = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
@@ -179,7 +200,7 @@ final class Webhook
             $decoded = null;
         }
         if (!is_array($decoded) || ($decoded !== [] && array_is_list($decoded))) {
-            throw self::headerError('The pdf.failed body is not a JSON object');
+            throw self::headerError($problem);
         }
 
         /** @var array<string, mixed> $decoded */

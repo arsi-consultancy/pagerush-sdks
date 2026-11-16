@@ -43,7 +43,7 @@ echo "Saved invoice.pdf (job {$result->job_id})\n";
 ```
 
 The template reads the render data with `json("data.json")`. More complete programs are in
-[`examples/`](examples): `quickstart.php`, `async-render.php` and `webhook-receiver.php`.
+[`examples/`](examples): `quickstart.php`, `async-render.php`, `batch.php` and `webhook-receiver.php`.
 
 ## Usage
 
@@ -224,11 +224,74 @@ $result = $client->templates->render($templateId, [
 // $result->queued === true; store $result->job_id if you want to match the delivery later.
 ```
 
+### Batches
+
+A batch renders one template with many data records (1 to 1,000 items) and collects the PDFs in a ZIP
+file. `create()` returns straight away with the queued batch; the PDFs render in the background.
+
+```php
+$batch = $client->batches->create($templateId, [
+    'items' => [
+        ['data' => ['number' => 'INV-001', 'customer' => 'Acme Ltd'], 'filename' => 'INV-001.pdf'],
+        ['data' => ['number' => 'INV-002', 'customer' => 'Globex']],   // filename is optional
+    ],
+    'metadata' => ['run' => '2026-11'],      // optional, as for render
+    // also: 'version', 'delete_after_download', 'callback_url', 'idempotency_key'
+]);
+
+$batch = $client->batches->wait($batch['id']);   // polls until succeeded, partial or failed
+
+echo "{$batch['succeeded']} of {$batch['item_count']} rendered\n";
+foreach ($batch['items'] ?? [] as $item) {
+    if ($item['error'] !== null) {
+        echo "Item {$item['index']} failed: {$item['error']['message']}\n";
+    }
+}
+
+if ($batch['succeeded'] > 0) {
+    file_put_contents('invoices.zip', $client->batches->downloadZip($batch['id']));
+}
+```
+
+`items` can be an array or any iterable, so you can build it from a CSV file with `fgetcsv()`:
+
+```php
+$csv = fopen('customers.csv', 'r');
+$header = fgetcsv($csv, null, ',', '"', '');
+$items = [];
+while (($row = fgetcsv($csv, null, ',', '"', '')) !== false) {
+    if ($row !== [null]) {                          // skip blank lines
+        $items[] = ['data' => array_combine($header, $row)];
+    }
+}
+fclose($csv);
+
+$batch = $client->batches->create($templateId, ['items' => $items]);
+```
+
+- `batches->create()` always sends an `Idempotency-Key`. When you don't pass `idempotency_key`, the SDK
+  generates one and reuses it across retries, so a retry never starts (or bills) the batch twice. The
+  API refuses a batch your quota and credits can't cover (402 `QUOTA_EXCEEDED`) and a fourth
+  unfinished batch (429 `CONCURRENCY_LIMIT`); the SDK doesn't split batches.
+- `batches->get()` returns the batch with its `items`: one per record, in order, each with `index`,
+  `job_id`, `status`, `filename`, `bytes`, `renders` and `error`.
+- `batches->wait()` returns the batch once its status is `succeeded`, `partial` (some items failed) or
+  `failed`; it does not throw for those. Options: `timeout` (default 600 seconds) and `interval`
+  (default 2). It throws a `PageRushException` with status 0 and code `WAIT_TIMEOUT` if the batch is
+  still running after `timeout`.
+- `batches->downloadZip()` returns the ZIP bytes (one PDF per succeeded item). It sends your API key,
+  so it takes the batch ID; `zip_url` in the batch is the same endpoint, shown as data. While the batch
+  is still rendering it throws `CONFLICT` (409, with `retryAfter`); when no PDFs are left it throws
+  `FILE_EXPIRED` (410).
+
+With `callback_url`, the API also POSTs a `batch.completed` notice to your URL when the batch finishes
+(see [Webhooks](#webhooks)). The notice has no PDFs: download the ZIP with `downloadZip()`.
+
 ### Webhooks
 
 Each delivery is signed with your project's webhook secret. The `X-PageRush-Signature` header signs
-the timestamp, the event, job ID and metadata headers, and the body, so every field of a verified
-event can be trusted. `PageRush\Webhook` is static, so a receiver needs only the secret, not an API
+the timestamp, the event, job ID (batch ID for `batch.completed`) and metadata headers, and the body,
+so every field of a verified event can be trusted. `PageRush\Webhook` is static, so a receiver needs only the secret, not an API
 key.
 
 ```php
@@ -245,12 +308,14 @@ PSR-7's `getHeaders()`. Names are matched without regard to case.
 
 | property | value |
 |---|---|
-| `event` | `pdf.succeeded` or `pdf.failed`. Other values may appear later; they have `pdf` and `failure` null |
-| `job_id` | the job ID; the same on every retry of a delivery |
+| `event` | `pdf.succeeded`, `pdf.failed` or `batch.completed`. Other values may appear later; they have `pdf`, `failure` and `batch` null |
+| `job_id` | the job ID; the same on every retry of a delivery. Null on `batch.completed` |
+| `batch_id` | the batch ID on `batch.completed` (from `X-PageRush-Batch-Id`), else null; the same on every retry |
+| `batch` | the body's `batch` object on `batch.completed` (the batch without `items`: `id`, `status`, `item_count`, `succeeded`, `failed`, `zip_url`, ...), else null |
 | `timestamp` | the signed Unix timestamp |
 | `pdf` | the PDF bytes (`pdf.succeeded` only) |
 | `failure` | the parsed JSON body: `event, job_id, template_id, error{code,message}, metadata, created_at` (`pdf.failed` only) |
-| `metadata` | the render's metadata as a string map, or null when there is none |
+| `metadata` | the render's or batch's metadata as a string map, or null when there is none |
 
 **Use the raw body.** The signature covers the exact bytes the API sent. Read them with
 `file_get_contents('php://input')` (or your framework's raw-content method). Never `json_decode` the
@@ -260,12 +325,18 @@ body and encode it again before verifying: the bytes change and verification fai
 after the work succeeds, and skip repeats. Check a job ID against `^[A-Za-z0-9_-]{1,64}$` before using
 it in a file name.
 
+**Batch notices.** A batch with a `callback_url` sends one `batch.completed` notice when it finishes. It
+carries `X-PageRush-Batch-Id` instead of `X-PageRush-Job-Id`, and the signature covers the batch ID in
+the job ID's place; `verify()` and `constructEvent()` handle this for you. On that event `job_id` is
+null, so dedupe on `$event->job_id ?? $event->batch_id`. The notice has no PDFs: call
+`$client->batches->downloadZip($event->batch_id)` (with an API key) to fetch them.
+
 Options: `tolerance` (seconds between the signed timestamp and now, default 300) and `now` (a Unix
 timestamp, for tests). During a secret rotation, pass both secrets: `[$newSecret, $oldSecret]`.
 
 On failure, both methods throw `PageRush\Exception\WebhookVerificationException`, whose `reason` is
-`header` (a missing or malformed signature, event or job ID header, or a `pdf.failed` body that is
-not a JSON object), `timestamp` (outside the tolerance) or `signature` (no match for your secret).
+`header` (a missing or malformed signature, event or ID header, a `pdf.failed` body that is not a JSON
+object, or a `batch.completed` body without a `batch` object), `timestamp` (outside the tolerance) or `signature` (no match for your secret).
 Respond with 400. A missing or empty secret is a programming error and throws
 `InvalidArgumentException` instead, so check that your secret setting is present.
 
@@ -298,23 +369,26 @@ try {
     exit;
 }
 
-if (preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $event->job_id) !== 1) {
+$id = $event->job_id ?? $event->batch_id ?? '';   // batch.completed has a batch ID instead
+if (preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $id) !== 1) {
     http_response_code(400);
     exit;
 }
-if (already_handled($event->job_id)) {   // your own dedupe store
+if (already_handled($id)) {   // your own dedupe store
     http_response_code(200);
     exit;
 }
 
 if ($event->event === WebhookEvent::SUCCEEDED) {
-    file_put_contents("/var/invoices/{$event->job_id}.pdf", $event->pdf);
+    file_put_contents("/var/invoices/{$id}.pdf", $event->pdf);
 } elseif ($event->event === WebhookEvent::FAILED) {
-    error_log("Render {$event->job_id} failed: " . $event->failure['error']['message']);
+    error_log("Render {$id} failed: " . $event->failure['error']['message']);
+} elseif ($event->event === WebhookEvent::BATCH_COMPLETED) {
+    queue_zip_download($id);   // e.g. a job that calls $client->batches->downloadZip($id)
 }
 
-// Record the job only after the work succeeded, so a failed attempt is retried.
-mark_handled($event->job_id);
+// Record the ID only after the work succeeded, so a failed attempt is retried.
+mark_handled($id);
 http_response_code(200);
 ```
 
@@ -344,21 +418,25 @@ Route::post('/webhooks/pagerush', function (Request $request) {
         return response('Invalid signature: ' . $e->reason, 400);
     }
 
-    abort_unless(preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $event->job_id) === 1, 400, 'Unexpected job ID');
+    // batch.completed carries a batch ID instead of a job ID.
+    $id = $event->job_id ?? $event->batch_id ?? '';
+    abort_unless(preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $id) === 1, 400, 'Unexpected ID');
 
-    // At-least-once delivery: handle each job ID once.
-    $key = 'pagerush-job:' . $event->job_id;
+    // At-least-once delivery: handle each ID once.
+    $key = 'pagerush:' . $id;
     if (Cache::has($key)) {
         return response('Already handled');
     }
 
     if ($event->event === WebhookEvent::SUCCEEDED) {
-        Storage::put("invoices/{$event->job_id}.pdf", $event->pdf);
+        Storage::put("invoices/{$id}.pdf", $event->pdf);
     } elseif ($event->event === WebhookEvent::FAILED) {
         logger()->error('PageRush render failed', $event->failure ?? []);
+    } elseif ($event->event === WebhookEvent::BATCH_COMPLETED) {
+        logger()->info('PageRush batch finished', $event->batch ?? []);
     }
 
-    // Record the job only after the work succeeded, so a failed attempt is retried.
+    // Record the ID only after the work succeeded, so a failed attempt is retried.
     Cache::put($key, true, now()->addDay());
 
     return response('OK');
@@ -371,7 +449,7 @@ Every exception the SDK throws implements `PageRush\Exception\PageRushExceptionI
 
 | exception | when |
 |---|---|
-| `PageRushException` | the API returned a non-2xx response, a 2xx response was not what the API documents (`INVALID_RESPONSE`), or `jobs->wait()` / `jobs->download()` could not finish (`WAIT_TIMEOUT`, `FILE_EXPIRED`) |
+| `PageRushException` | the API returned a non-2xx response, a 2xx response was not what the API documents (`INVALID_RESPONSE`), or `jobs->wait()` / `jobs->download()` / `batches->wait()` could not finish (`WAIT_TIMEOUT`, `FILE_EXPIRED`) |
 | `ConnectionException` (extends `PageRushException`) | no response arrived: `errorCode` is `TIMEOUT` or `CONNECTION_ERROR`, `status` is 0 |
 | `WebhookVerificationException` | a webhook did not verify; see `reason` |
 | `InvalidArgumentException` | caught before any request is sent: a missing or malformed API key, an unknown or mistyped option, a bad idempotency key, a body that can't be encoded as JSON (NAN, INF, invalid UTF-8), or an empty webhook secret. `errorCode` is `VALIDATION_FAILED`, `status` is 0, and it is never retried |
@@ -428,6 +506,7 @@ try {
 times (default 2, so at most 3 attempts):
 
 - GET and DELETE: on connection errors, timeouts, 429, 502, 503 and 504.
+- Batch create: the same as GET (it always carries an idempotency key), but never on 409.
 - Render: the same, plus 409 with code `CONFLICT` (the API is still working on an earlier attempt with
   the same idempotency key). Renders are safe to retry because they always carry an idempotency key.
   A 409 `IDEMPOTENCY_CONFLICT` (the key was used for a different request) is never retried.
@@ -456,7 +535,7 @@ All methods throw `PageRushException` (or `ConnectionException`) on failure unle
 | `sleep` | `callable(float): void` | `usleep` |
 | `clock` | `callable(): float` | `microtime(true)` |
 
-Properties: `templates`, `jobs`, `webhooks`.
+Properties: `templates`, `jobs`, `batches`, `webhooks`.
 
 ### `$client->templates`
 
@@ -481,12 +560,25 @@ Properties: `templates`, `jobs`, `webhooks`.
 | `wait(string $id, array $options = [])` — `timeout` (120), `interval` (1) seconds | Job with status `succeeded` or `failed`; `PageRushException` code `WAIT_TIMEOUT` |
 | `download(string $id)` | PDF bytes (string); `PageRushException` code `FILE_EXPIRED` when there is no `download_url` |
 
+### `$client->batches`
+
+| method | HTTP | returns |
+|---|---|---|
+| `create(string $templateId, array $options)` — `items` (required: list or iterable of `['data' => mixed, 'filename' => ?string]`), `version`, `metadata`, `delete_after_download`, `callback_url`, `idempotency_key` | `POST /v1/templates/{id}/batches` | Batch (queued); throws `InvalidArgumentException` without items, for an item without `data` or an unknown option |
+| `get(string $id)` | `GET /v1/batches/{id}` | Batch, with `items` |
+| `wait(string $id, array $options = [])` — `timeout` (600), `interval` (2) seconds | repeated `get` | Batch with status `succeeded`, `partial` or `failed`; `PageRushException` code `WAIT_TIMEOUT` |
+| `downloadZip(string $id)` | `GET /v1/batches/{id}/zip` | ZIP bytes (string); `PageRushException` `CONFLICT` (409) while rendering, `FILE_EXPIRED` (410), `INVALID_RESPONSE` when a 200 is not `application/zip` |
+
+Batch fields: `id`, `status` (`queued`, `rendering`, `succeeded`, `partial`, `failed`), `template_id`,
+`template_version`, `item_count`, `succeeded`, `failed`, `zip_url`, `expires_at`, `metadata`,
+`delete_after_download`, `delivery`, `created_at`, `finished_at`, and `items` from `get()`/`wait()`.
+
 ### `PageRush\Webhook` (static) and `$client->webhooks`
 
 | method | returns |
 |---|---|
 | `verify(string $rawBody, array $headers, string\|array $secrets, array $options = [])` | `void`; throws `WebhookVerificationException`, or `InvalidArgumentException` for a missing or empty secret |
-| `constructEvent(string $rawBody, array $headers, string\|array $secrets, array $options = [])` | `WebhookEvent`; throws as `verify()`, and `WebhookVerificationException` with reason `header` when a `pdf.failed` body is not a JSON object |
+| `constructEvent(string $rawBody, array $headers, string\|array $secrets, array $options = [])` | `WebhookEvent`; throws as `verify()`, and `WebhookVerificationException` with reason `header` when a `pdf.failed` body is not a JSON object or a `batch.completed` body has no `batch` object |
 
 ### Other types
 
@@ -496,10 +588,10 @@ Properties: `templates`, `jobs`, `webhooks`.
 - `TemplateFile::fromContents(string $path, string $contents): array` and
   `TemplateFile::fromPath(string $localPath, ?string $targetPath = null): array` build
   `['path', 'content', 'encoding']` entries. A text file that isn't valid UTF-8 is sent as base64.
-- `PageRush\Types` declares PHPStan/Psalm array shapes (`Template`, `TemplateVersion`, `Job`, ...).
+- `PageRush\Types` declares PHPStan/Psalm array shapes (`Template`, `TemplateVersion`, `Job`, `Batch`, `BatchItem`, ...).
   Import them with `@phpstan-import-type Template from \PageRush\Types`.
 - `PageRush\Version::VERSION`: the SDK version, also sent in the `User-Agent` header
-  (`pagerush-php/0.1.0`).
+  (`pagerush-php/0.2.0`).
 
 ## Development
 

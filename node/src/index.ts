@@ -4,6 +4,7 @@
  * @packageDocumentation
  */
 
+export { Batches } from "./batches";
 export { DEFAULT_BASE_URL, PageRush, type PageRushOptions } from "./client";
 export {
   type ErrorDetail,

@@ -1,5 +1,6 @@
 // Command webhook-receiver accepts PageRush callback_url deliveries, verifies
-// their signatures and saves each PDF once.
+// their signatures and saves each PDF once. It also logs batch.completed
+// notices, which carry the finished batch instead of a PDF.
 //
 //	PAGERUSH_WEBHOOK_SECRET=whsec_... go run ./examples/webhook-receiver
 //
@@ -18,7 +19,7 @@ import (
 	pagerush "github.com/arsi-consultancy/pagerush-sdks/go"
 )
 
-var safeJobID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 func main() {
 	secret := os.Getenv("PAGERUSH_WEBHOOK_SECRET")
@@ -30,9 +31,9 @@ func main() {
 		secrets = append(secrets, prev)
 	}
 
-	// Delivery is at-least-once: remember job IDs already handled, and only
-	// once the work for them succeeded, so a failed attempt is retried. Use
-	// a database in production; this map is lost on restart.
+	// Delivery is at-least-once: remember job and batch IDs already handled,
+	// and only once the work for them succeeded, so a failed attempt is
+	// retried. Use a database in production; this map is lost on restart.
 	var mu sync.Mutex
 	seen := map[string]bool{}
 
@@ -56,15 +57,20 @@ func main() {
 			return
 		}
 
-		// The job ID becomes part of a file name: accept only the expected
+		// A batch.completed notice carries a batch ID instead of a job ID.
+		// The ID becomes part of a file name: accept only the expected
 		// characters.
-		if !safeJobID.MatchString(event.JobID) {
-			http.Error(w, "unexpected job id", http.StatusBadRequest)
+		id := event.JobID
+		if event.Event == pagerush.EventBatchCompleted {
+			id = event.BatchID
+		}
+		if !safeID.MatchString(id) {
+			http.Error(w, "unexpected id", http.StatusBadRequest)
 			return
 		}
 
 		mu.Lock()
-		dup := seen[event.JobID]
+		dup := seen[id]
 		mu.Unlock()
 		if dup {
 			w.WriteHeader(http.StatusOK)
@@ -81,10 +87,15 @@ func main() {
 			log.Printf("saved %s (metadata %v)", name, event.Metadata)
 		case pagerush.EventPDFFailed:
 			log.Printf("job %s failed: %s: %s", event.JobID, event.Failure.Error.Code, event.Failure.Error.Message)
+		case pagerush.EventBatchCompleted:
+			// The notice has no PDFs. Download the ZIP with
+			// client.Batches.DownloadZip(ctx, event.BatchID), for example
+			// from a background worker.
+			log.Printf("batch %s %s: %d of %d rendered", event.BatchID, event.Batch.Status, event.Batch.Succeeded, event.Batch.ItemCount)
 		}
 
 		mu.Lock()
-		seen[event.JobID] = true
+		seen[id] = true
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	})

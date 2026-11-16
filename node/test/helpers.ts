@@ -121,3 +121,39 @@ export function job(overrides: Record<string, unknown> = {}) {
 }
 
 export const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n%%EOF\n");
+
+export function batch(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "bat_1",
+    status: "queued",
+    template_id: "tpl_1",
+    template_version: 3,
+    item_count: 2,
+    succeeded: 0,
+    failed: 0,
+    zip_url: null,
+    expires_at: null,
+    metadata: null,
+    delete_after_download: false,
+    delivery: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    finished_at: null,
+    ...overrides,
+  };
+}
+
+export function batchItem(overrides: Record<string, unknown> = {}) {
+  return {
+    index: 0,
+    job_id: "job_1",
+    status: "succeeded",
+    filename: "a.pdf",
+    bytes: 1234,
+    renders: 1,
+    error: null,
+    ...overrides,
+  };
+}
+
+/** The first bytes of a ZIP file (an empty archive's end-of-central-directory record). */
+export const ZIP_BYTES = new Uint8Array([0x50, 0x4b, 0x05, 0x06, ...new Array<number>(18).fill(0)]);

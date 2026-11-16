@@ -2,6 +2,7 @@
 
 import { WebhookVerificationError } from "./errors";
 import { toBytes, utf8Encode, webCrypto } from "./internal";
+import type { Batch } from "./types";
 
 /** Raw request body: the exact bytes received. */
 export type RawBody = Uint8Array | ArrayBuffer | string;
@@ -20,10 +21,19 @@ export interface VerifyOptions {
 
 /** A verified callback, as returned by {@link constructEvent}. Every field comes from signed data. */
 export interface WebhookEvent {
-  /** `pdf.succeeded` or `pdf.failed` (from `X-PageRush-Event`). */
-  event: "pdf.succeeded" | "pdf.failed" | (string & {});
-  /** `X-PageRush-Job-Id`. The same on every retry: dedupe on it, delivery is at-least-once. */
-  job_id: string;
+  /** `pdf.succeeded`, `pdf.failed` or `batch.completed` (from `X-PageRush-Event`). */
+  event: "pdf.succeeded" | "pdf.failed" | "batch.completed" | (string & {});
+  /**
+   * `X-PageRush-Job-Id`; null for `batch.completed`. The same on every retry: dedupe on it, delivery
+   * is at-least-once.
+   */
+  job_id: string | null;
+  /**
+   * `X-PageRush-Batch-Id`, for `batch.completed`; otherwise null. The same on every retry: dedupe on it.
+   */
+  batch_id: string | null;
+  /** The body's `batch` (a {@link Batch} without `items`), for `batch.completed`; otherwise null. */
+  batch: Batch | null;
   /** Signature timestamp, Unix seconds. */
   timestamp: number;
   /** The PDF, for `pdf.succeeded`; otherwise null. */
@@ -31,8 +41,9 @@ export interface WebhookEvent {
   /** The parsed JSON body, for `pdf.failed`; otherwise null. */
   failure: WebhookFailure | null;
   /**
-   * The render's metadata: from `X-PageRush-Metadata` on `pdf.succeeded`, from the body on
-   * `pdf.failed`. Null if there is none, or if it is not a JSON object of strings.
+   * The render's or batch's metadata: from `X-PageRush-Metadata` on `pdf.succeeded` and
+   * `batch.completed`, from the body on `pdf.failed`. Null if there is none, or if it is not a JSON
+   * object of strings.
    */
   metadata: Record<string, string> | null;
 }
@@ -54,7 +65,8 @@ interface SignedHeaders {
   t: string;
   v2: string[];
   event: string;
-  jobId: string;
+  /** `X-PageRush-Batch-Id` for `batch.completed`, else `X-PageRush-Job-Id`. */
+  id: string;
   /** `X-PageRush-Metadata`, or null when absent. */
   metadata: string | null;
 }
@@ -71,9 +83,13 @@ function headerOf(headers: HeadersInput, name: string): string | null {
   return null;
 }
 
+/** The event whose id header is `X-PageRush-Batch-Id`. */
+const BATCH_COMPLETED = "batch.completed";
+
 /**
- * Reads the signature, event, job id and metadata headers. The signature header is
- * comma-separated `key=value` pairs; unknown keys are ignored.
+ * Reads the signature, event, id and metadata headers. The id header is `X-PageRush-Batch-Id` for
+ * `batch.completed` and `X-PageRush-Job-Id` otherwise; only that one counts. The signature header
+ * is comma-separated `key=value` pairs; unknown keys are ignored.
  */
 function readSignedHeaders(headers: HeadersInput): SignedHeaders {
   const fail = (what: string) => new WebhookVerificationError("header", what);
@@ -96,9 +112,10 @@ function readSignedHeaders(headers: HeadersInput): SignedHeaders {
   }
   const event = headerOf(headers, "X-PageRush-Event");
   if (!event) throw fail("Missing X-PageRush-Event header");
-  const jobId = headerOf(headers, "X-PageRush-Job-Id");
-  if (!jobId) throw fail("Missing X-PageRush-Job-Id header");
-  return { t: ts[0]!, v2, event, jobId, metadata: headerOf(headers, "X-PageRush-Metadata") };
+  const idHeader = event === BATCH_COMPLETED ? "X-PageRush-Batch-Id" : "X-PageRush-Job-Id";
+  const id = headerOf(headers, idHeader);
+  if (!id) throw fail(`Missing ${idHeader} header`);
+  return { t: ts[0]!, v2, event, id, metadata: headerOf(headers, "X-PageRush-Metadata") };
 }
 
 /**
@@ -150,7 +167,7 @@ async function verifyDelivery(
     );
   }
   const body = toBytes(rawBody);
-  const prefix = utf8Encode(`${signed.t}\n${signed.event}\n${signed.jobId}\n${signed.metadata ?? ""}\n`);
+  const prefix = utf8Encode(`${signed.t}\n${signed.event}\n${signed.id}\n${signed.metadata ?? ""}\n`);
   const message = new Uint8Array(prefix.length + body.length);
   message.set(prefix, 0);
   message.set(body, prefix.length);
@@ -169,7 +186,8 @@ async function verifyDelivery(
 
 /**
  * Checks that a callback was sent by PageRush and has not been changed. The signature covers the
- * timestamp, the event, job id and metadata headers, and the raw body.
+ * timestamp, the event, id (`X-PageRush-Job-Id`, or `X-PageRush-Batch-Id` for `batch.completed`)
+ * and metadata headers, and the raw body.
  *
  * Pass every secret you currently accept (e.g. new and old during a rotation); any match passes.
  *
@@ -219,13 +237,15 @@ function parseMetadata(raw: string | null): Record<string, string> | null {
  * @param headers - The request headers (Fetch `Headers` or Node `req.headers`).
  * @param secrets - Your project's webhook secret, or several.
  * @throws {@link WebhookVerificationError} if verification fails, or with reason `header` if a
- *   `pdf.failed` body is not a JSON object.
+ *   `pdf.failed` body is not a JSON object, or a `batch.completed` body is not a JSON object with a
+ *   `batch` object.
  * @throws TypeError if no secret is given or a secret is an empty string.
  *
  * @example
  * ```ts
  * const event = await webhooks.constructEvent(rawBody, req.headers, secret);
- * if (event.event === "pdf.succeeded") await savePdf(event.job_id, event.pdf!);
+ * if (event.event === "pdf.succeeded") await savePdf(event.job_id!, event.pdf!);
+ * if (event.event === "batch.completed") await fetchZip(event.batch_id!);
  * ```
  */
 export async function constructEvent(
@@ -238,24 +258,51 @@ export async function constructEvent(
   const body = toBytes(rawBody);
   let pdf: Uint8Array | null = null;
   let failure: WebhookFailure | null = null;
+  let batch: Batch | null = null;
   let metadata: Record<string, string> | null = null;
   if (signed.event === "pdf.failed") {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
-    } catch {
-      parsed = null;
-    }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      throw new WebhookVerificationError("header", "pdf.failed body is not a JSON object");
-    }
-    failure = parsed as WebhookFailure;
+    const parsed = parseJsonObject(body);
+    if (!parsed) throw new WebhookVerificationError("header", "pdf.failed body is not a JSON object");
+    failure = parsed as unknown as WebhookFailure;
     metadata = stringMap(failure.metadata);
   } else if (signed.event === "pdf.succeeded") {
     pdf = body;
     metadata = parseMetadata(signed.metadata);
+  } else if (signed.event === BATCH_COMPLETED) {
+    const inner = parseJsonObject(body)?.batch;
+    if (typeof inner !== "object" || inner === null || Array.isArray(inner)) {
+      throw new WebhookVerificationError(
+        "header",
+        "batch.completed body is not a JSON object with a batch object",
+      );
+    }
+    batch = inner as Batch;
+    metadata = parseMetadata(signed.metadata);
   }
-  return { event: signed.event, job_id: signed.jobId, timestamp: Number(signed.t), pdf, failure, metadata };
+  const isBatch = signed.event === BATCH_COMPLETED;
+  return {
+    event: signed.event,
+    job_id: isBatch ? null : signed.id,
+    batch_id: isBatch ? signed.id : null,
+    batch,
+    timestamp: Number(signed.t),
+    pdf,
+    failure,
+    metadata,
+  };
+}
+
+/** Parses a UTF-8 JSON body that must be an object; null if it is anything else. */
+function parseJsonObject(body: Uint8Array): Record<string, unknown> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+  } catch {
+    return null;
+  }
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
 }
 
 /**

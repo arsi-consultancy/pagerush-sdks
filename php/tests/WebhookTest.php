@@ -64,8 +64,26 @@ final class WebhookTest extends TestCase
 
         $event = Webhook::constructEvent($body, $case['headers'], $secrets, $options);
         self::assertSame($case['headers']['X-PageRush-Event'], $event->event);
-        self::assertSame($case['headers']['X-PageRush-Job-Id'], $event->job_id);
         self::assertSame(1767225600, $event->timestamp);
+        if ($event->event === WebhookEvent::BATCH_COMPLETED) {
+            self::assertNull($event->job_id);
+            self::assertSame($case['headers']['X-PageRush-Batch-Id'], $event->batch_id);
+            $decoded = json_decode($body, true);
+            self::assertIsArray($decoded);
+            self::assertSame($decoded['batch'], $event->batch);
+            self::assertNull($event->pdf);
+            self::assertNull($event->failure);
+            if (isset($case['headers']['X-PageRush-Metadata'])) {
+                self::assertSame(json_decode((string) $case['headers']['X-PageRush-Metadata'], true), $event->metadata);
+            } else {
+                self::assertNull($event->metadata);
+            }
+
+            return;
+        }
+        self::assertSame($case['headers']['X-PageRush-Job-Id'], $event->job_id);
+        self::assertNull($event->batch_id);
+        self::assertNull($event->batch);
         if ($event->event === WebhookEvent::SUCCEEDED) {
             self::assertSame($body, $event->pdf);
             self::assertNull($event->failure);
@@ -90,6 +108,17 @@ final class WebhookTest extends TestCase
         }
         self::assertEqualsCanonicalizing(['valid', 'header', 'timestamp', 'signature'], array_values(array_unique($reasons)));
         self::assertContains('{"order":"42","amount":"\\u20b91,250"}', $metadata);
+    }
+
+    public function testVectorsFileHasBatchCompletedCases(): void
+    {
+        $batch = [];
+        foreach (self::vectors() as [$case]) {
+            if (($case['headers']['X-PageRush-Event'] ?? null) === WebhookEvent::BATCH_COMPLETED) {
+                $batch[] = $case['reason'] ?? 'valid';
+            }
+        }
+        self::assertEqualsCanonicalizing(['valid', 'valid', 'signature', 'header'], $batch);
     }
 
     public function testDecodesEscapedMetadataToTheOriginalValues(): void
@@ -119,7 +148,7 @@ final class WebhookTest extends TestCase
         $headers = [
             'X-PageRush-Signature' => 't=' . $t . ',v2=' . hash_hmac('sha256', $signed, $secret),
             'X-PageRush-Event' => $event,
-            'X-PageRush-Job-Id' => $jobId,
+            $event === WebhookEvent::BATCH_COMPLETED ? 'X-PageRush-Batch-Id' : 'X-PageRush-Job-Id' => $jobId,
             'X-PageRush-Timestamp' => (string) $t,
         ];
         if ($metadata !== null) {
@@ -272,14 +301,85 @@ final class WebhookTest extends TestCase
         self::assertSame(['order' => '42'], $event->metadata);
     }
 
+    public function testConstructEventForABatchCompletedNotice(): void
+    {
+        $batch = [
+            'id' => 'bat_7',
+            'status' => 'partial',
+            'template_id' => 'tpl_1',
+            'template_version' => 3,
+            'item_count' => 3,
+            'succeeded' => 2,
+            'failed' => 1,
+            'zip_url' => 'https://pagerush.dev/v1/batches/bat_7/zip',
+            'metadata' => ['run' => 'nov'],
+        ];
+        $body = (string) json_encode(['event' => 'batch.completed', 'batch' => $batch]);
+        $headers = self::delivery('batch.completed', 'bat_7', $body, '{"run":"nov"}');
+
+        $event = Webhook::constructEvent($body, array_change_key_case($headers, CASE_LOWER), self::SECRET, ['now' => self::NOW]);
+
+        self::assertSame(WebhookEvent::BATCH_COMPLETED, $event->event);
+        self::assertNull($event->job_id);
+        self::assertSame('bat_7', $event->batch_id);
+        self::assertSame($batch, $event->batch);
+        self::assertSame(self::NOW, $event->timestamp);
+        self::assertSame(['run' => 'nov'], $event->metadata);
+        self::assertNull($event->pdf);
+        self::assertNull($event->failure);
+    }
+
+    public function testBatchCompletedNeedsTheBatchIdHeader(): void
+    {
+        $body = '{"event":"batch.completed","batch":{"id":"bat_7"}}';
+        $headers = self::delivery('batch.completed', 'bat_7', $body);
+        $headers['X-PageRush-Job-Id'] = $headers['X-PageRush-Batch-Id'];
+        unset($headers['X-PageRush-Batch-Id']);
+
+        self::assertReason('header', static fn () => Webhook::verify($body, $headers, self::SECRET, ['now' => self::NOW]));
+        self::assertReason('header', static fn () => Webhook::constructEvent($body, $headers, self::SECRET, ['now' => self::NOW]));
+    }
+
+    public function testAPdfEventIgnoresABatchIdHeader(): void
+    {
+        $headers = self::delivery('pdf.succeeded', 'job_1', '%PDF-');
+        $headers['X-PageRush-Batch-Id'] = $headers['X-PageRush-Job-Id'];
+        unset($headers['X-PageRush-Job-Id']);
+
+        self::assertReason('header', static fn () => Webhook::verify('%PDF-', $headers, self::SECRET, ['now' => self::NOW]));
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function invalidBatchBodies(): iterable
+    {
+        yield 'not json' => ['{not json'];
+        yield 'json list' => ['[1,2]'];
+        yield 'no batch' => ['{"event":"batch.completed"}'];
+        yield 'batch not an object' => ['{"event":"batch.completed","batch":"bat_7"}'];
+        yield 'batch a list' => ['{"event":"batch.completed","batch":[1]}'];
+    }
+
+    #[DataProvider('invalidBatchBodies')]
+    public function testConstructEventRejectsABatchBodyWithoutABatchObject(string $body): void
+    {
+        $headers = self::delivery('batch.completed', 'bat_7', $body);
+        Webhook::verify($body, $headers, self::SECRET, ['now' => self::NOW]);
+        self::assertReason('header', static fn () => Webhook::constructEvent($body, $headers, self::SECRET, ['now' => self::NOW]));
+    }
+
     public function testConstructEventReturnsAnUnknownEventWithoutPayload(): void
     {
         $body = '{"something":"new"}';
         $event = Webhook::constructEvent($body, self::delivery('pdf.archived', 'job_3', $body, '{"a":"b"}'), self::SECRET, ['now' => self::NOW]);
 
         self::assertSame('pdf.archived', $event->event);
+        self::assertSame('job_3', $event->job_id);
         self::assertNull($event->pdf);
         self::assertNull($event->failure);
+        self::assertNull($event->batch);
+        self::assertNull($event->batch_id);
         self::assertNull($event->metadata);
     }
 

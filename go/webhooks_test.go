@@ -72,30 +72,21 @@ func TestWebhookVectors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ConstructEvent: %v", err)
 			}
-			if ev.Event != tc.Headers["X-PageRush-Event"] || ev.JobID != tc.Headers["X-PageRush-Job-Id"] {
+			if ev.Event != tc.Headers["X-PageRush-Event"] || ev.JobID != tc.Headers["X-PageRush-Job-Id"] ||
+				ev.BatchID != tc.Headers["X-PageRush-Batch-Id"] {
 				t.Fatalf("event = %+v", ev)
 			}
 			switch ev.Event {
+			case EventBatchCompleted:
+				if ev.JobID != "" || ev.Batch == nil || ev.Batch.ID != ev.BatchID || ev.PDF != nil || ev.Failure != nil {
+					t.Fatalf("event = %+v", ev)
+				}
+				assertHeaderMetadata(t, tc.Headers["X-PageRush-Metadata"], ev.Metadata)
 			case EventPDFSucceeded:
 				if string(ev.PDF) != string(body) || ev.Failure != nil {
 					t.Fatalf("event = %+v", ev)
 				}
-				if md := tc.Headers["X-PageRush-Metadata"]; md != "" {
-					var want map[string]string
-					if err := json.Unmarshal([]byte(md), &want); err != nil {
-						t.Fatal(err)
-					}
-					if len(ev.Metadata) != len(want) {
-						t.Fatalf("metadata = %v, want %v", ev.Metadata, want)
-					}
-					for k, v := range want {
-						if ev.Metadata[k] != v {
-							t.Fatalf("metadata = %v, want %v", ev.Metadata, want)
-						}
-					}
-				} else if ev.Metadata != nil {
-					t.Fatalf("metadata = %v, want nil", ev.Metadata)
-				}
+				assertHeaderMetadata(t, tc.Headers["X-PageRush-Metadata"], ev.Metadata)
 			case EventPDFFailed:
 				if ev.PDF != nil || ev.Failure == nil || ev.Failure.Error.Code == "" {
 					t.Fatalf("event = %+v", ev)
@@ -105,12 +96,41 @@ func TestWebhookVectors(t *testing.T) {
 	}
 }
 
-// signedRequest returns headers for a delivery signed with secret.
+// assertHeaderMetadata checks that got holds the metadata header md, or is
+// nil when md is empty.
+func assertHeaderMetadata(t *testing.T, md string, got map[string]string) {
+	t.Helper()
+	if md == "" {
+		if got != nil {
+			t.Fatalf("metadata = %v, want nil", got)
+		}
+		return
+	}
+	var want map[string]string
+	if err := json.Unmarshal([]byte(md), &want); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("metadata = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("metadata = %v, want %v", got, want)
+		}
+	}
+}
+
+// signedRequest returns headers for a delivery signed with secret. For
+// batch.completed, jobID is sent as the batch ID.
 func signedRequest(secret string, ts int64, event, jobID, metadata string, body []byte) http.Header {
 	t := strconv.FormatInt(ts, 10)
 	h := http.Header{}
 	h.Set(HeaderWebhookEvent, event)
-	h.Set(HeaderWebhookJobID, jobID)
+	if event == EventBatchCompleted {
+		h.Set(HeaderWebhookBatchID, jobID)
+	} else {
+		h.Set(HeaderWebhookJobID, jobID)
+	}
 	if metadata != "" {
 		h.Set(HeaderWebhookMetadata, metadata)
 	}
@@ -274,5 +294,79 @@ func TestConstructEventMetadata(t *testing.T) {
 	}
 	if _, err := ConstructEvent(failed, h, nil); !errors.Is(err, ErrNoWebhookSecret) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+const batchCompletedBody = `{"event":"batch.completed","batch":{"id":"bat_1","status":"partial","template_id":"tpl_1","template_version":3,"item_count":3,"succeeded":2,"failed":1,"zip_url":"https://pagerush.dev/v1/batches/bat_1/zip","expires_at":"2026-01-02T00:00:00.000Z","metadata":{"run":"nov"},"delete_after_download":false,"delivery":{"status":"pending","attempts":1,"error":null},"created_at":"2026-01-01T00:00:00.000Z","finished_at":"2026-01-01T00:01:00.000Z"}}`
+
+func TestConstructEventBatchCompleted(t *testing.T) {
+	now := time.Unix(1_767_225_600, 0)
+	body := []byte(batchCompletedBody)
+	h := signedRequest("whsec", now.Unix(), EventBatchCompleted, "bat_1", `{"run":"nov"}`, body)
+	if h.Get(HeaderWebhookJobID) != "" {
+		t.Fatal("job id header set")
+	}
+	ev, err := ConstructEvent(body, h, []string{"whsec"}, WithWebhookNow(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Event != EventBatchCompleted || ev.BatchID != "bat_1" || ev.JobID != "" || ev.PDF != nil || ev.Failure != nil ||
+		ev.Metadata["run"] != "nov" || !ev.Timestamp.Equal(now) {
+		t.Fatalf("event = %+v", ev)
+	}
+	b := ev.Batch
+	if b == nil || b.ID != "bat_1" || b.Status != BatchStatusPartial || b.ItemCount != 3 || b.Succeeded != 2 || b.Failed != 1 ||
+		b.ZipURL == nil || b.FinishedAt == nil || b.Delivery == nil || b.Delivery.Attempts != 1 || b.Items != nil || !b.Done() {
+		t.Fatalf("batch = %+v", b)
+	}
+}
+
+func TestVerifyWebhookBatchIDHeader(t *testing.T) {
+	now := time.Unix(1_767_225_600, 0)
+	body := []byte(batchCompletedBody)
+	good := signedRequest("whsec", now.Unix(), EventBatchCompleted, "bat_1", "", body)
+
+	t.Run("job id header instead of batch id header", func(t *testing.T) {
+		h := good.Clone()
+		h.Set(HeaderWebhookJobID, h.Get(HeaderWebhookBatchID))
+		h.Del(HeaderWebhookBatchID)
+		assertReason(t, VerifyWebhook(body, h, []string{"whsec"}, WithWebhookNow(now)), WebhookReasonHeader)
+	})
+	t.Run("an extra job id header is ignored", func(t *testing.T) {
+		h := good.Clone()
+		h.Set(HeaderWebhookJobID, "job_9")
+		ev, err := ConstructEvent(body, h, []string{"whsec"}, WithWebhookNow(now))
+		if err != nil || ev.JobID != "" || ev.BatchID != "bat_1" {
+			t.Fatalf("ev = %+v, err = %v", ev, err)
+		}
+	})
+	t.Run("pdf event with only a batch id header", func(t *testing.T) {
+		pdf := []byte("%PDF-1.7")
+		h := http.Header{}
+		h.Set(HeaderWebhookEvent, EventPDFSucceeded)
+		h.Set(HeaderWebhookBatchID, "bat_1")
+		h.Set(HeaderWebhookSignature, "t=1767225600,v2="+signV2("whsec", "1767225600", EventPDFSucceeded, "bat_1", "", pdf))
+		assertReason(t, VerifyWebhook(pdf, h, []string{"whsec"}, WithWebhookNow(now)), WebhookReasonHeader)
+	})
+	t.Run("lowercase batch id header", func(t *testing.T) {
+		h := http.Header{}
+		for k, v := range good {
+			h[lower(k)] = v
+		}
+		if err := VerifyWebhook(body, h, []string{"whsec"}, WithWebhookNow(now)); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestConstructEventBatchCompletedBadBody(t *testing.T) {
+	now := time.Unix(1_767_225_600, 0)
+	for _, body := range []string{
+		"not json", "[]", "null", `{"event":"batch.completed"}`, `{"batch":null}`, `{"batch":[]}`,
+		`{"batch":"bat_1"}`, `{"batch":{"id":1}}`, `{"batch":`,
+	} {
+		b := []byte(body)
+		_, err := ConstructEvent(b, signedRequest("whsec", now.Unix(), EventBatchCompleted, "bat_1", "", b), []string{"whsec"}, WithWebhookNow(now))
+		assertReason(t, err, WebhookReasonHeader)
 	}
 }

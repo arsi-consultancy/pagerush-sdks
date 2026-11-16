@@ -260,11 +260,106 @@ res, err := client.Templates.Render(ctx, templateID, &pagerush.RenderParams{
 // res.Queued is true; res.JobID identifies the delivery.
 ```
 
+### Batches
+
+A batch renders up to 1,000 PDFs from one template in a single request: one item per document, each
+with its own data and an optional file name in the ZIP. `Batches.Create` returns the queued batch
+straight away; `Batches.Wait` polls until it has finished, and `Batches.DownloadZip` downloads the
+PDFs as one ZIP.
+
+```go
+type invoice struct {
+	Number   string `json:"number"`
+	Customer string `json:"customer"`
+}
+invoices := []invoice{{"INV-101", "Example Ltd"}, {"INV-102", "Sample GmbH"}}
+
+items := make([]pagerush.BatchItemParams, 0, len(invoices))
+for _, inv := range invoices {
+	items = append(items, pagerush.BatchItemParams{
+		Data:     inv,                                   // any JSON value, as for Render
+		Filename: pagerush.String(inv.Number + ".pdf"), // optional name in the ZIP
+	})
+}
+batch, err := client.Batches.Create(ctx, templateID, &pagerush.CreateBatchParams{
+	Items:    items,
+	Metadata: map[string]string{"run": "2026-11"}, // optional, as for Render
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+batch, err = client.Batches.Wait(ctx, batch.ID, nil) // polls every 2 s for up to 10 minutes
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Printf("%s: %d succeeded, %d failed\n", batch.Status, batch.Succeeded, batch.Failed)
+for _, item := range batch.Items {
+	if item.Error != nil {
+		fmt.Printf("item %d (job %s): %s\n", item.Index, item.JobID, item.Error.Message)
+	}
+}
+
+if batch.Succeeded > 0 {
+	zip, err := client.Batches.DownloadZip(ctx, batch.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := os.WriteFile("invoices.zip", zip, 0o644); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+To render the rows of a CSV file, read it with `encoding/csv` and make one item per row:
+
+```go
+f, err := os.Open("invoices.csv") // a header row, then one row per invoice
+if err != nil {
+	log.Fatal(err)
+}
+defer f.Close()
+rows, err := csv.NewReader(f).ReadAll()
+if err != nil {
+	log.Fatal(err)
+}
+var items []pagerush.BatchItemParams
+for _, row := range rows[1:] {
+	data := map[string]any{}
+	for i, column := range rows[0] {
+		data[column] = row[i]
+	}
+	items = append(items, pagerush.BatchItemParams{Data: data})
+}
+```
+
+`CreateBatchParams` also takes `Version`, `DeleteAfterDownload`, `CallbackURL` and `IdempotencyKey`,
+which work as they do for `Render`. Without your own `IdempotencyKey`, `Create` generates one and
+reuses it on each retry, so a retry never creates a second batch.
+
+- `Batches.Wait` returns the batch once it is `succeeded`, `partial` (some items failed) or `failed`;
+  none of these is an error. Check `Status`, `Succeeded`, `Failed` and each item's `Error`. If the
+  batch is still running after `WaitOptions.Timeout`, it returns an `*Error` with status 0 and code
+  `WAIT_TIMEOUT`.
+- `Batches.Get` returns the batch with each item's `Index`, `JobID`, `Status`, `Filename`, `Bytes`,
+  `Renders` and `Error`.
+- `Batches.DownloadZip` sends your API key (the batch's `ZipURL` is an API URL, not a signed link, so
+  use `DownloadZip` rather than fetching `ZipURL` yourself). While the batch is still rendering it
+  returns an `*Error` with status 409 and code `CONFLICT` (with `RetryAfter`); once no PDFs are left
+  (expired, or deleted after download), status 410 and code `FILE_EXPIRED`. A 200 response that isn't
+  `application/zip` is an `INVALID_RESPONSE` error.
+- The API refuses a batch your quota and credits can't cover (402 `QUOTA_EXCEEDED`) and a fourth
+  unfinished batch (429 `CONCURRENCY_LIMIT`). The SDK doesn't split batches.
+- With `CallbackURL`, PageRush POSTs a signed `batch.completed` notice when the batch has finished
+  (see [Webhooks](#webhooks)). It carries the batch, not the PDFs.
+
+[`examples/batch`](examples/batch) is a complete program, with an optional CSV file.
+
 ### Webhooks
 
 PageRush signs each callback with your project's webhook secret. The signature covers the body and the
-`X-PageRush-Event`, `X-PageRush-Job-Id` and `X-PageRush-Metadata` headers, so everything
-`ConstructEvent` returns is verified. The webhook functions are package-level, so a receiver doesn't
+`X-PageRush-Event`, `X-PageRush-Job-Id` (`X-PageRush-Batch-Id` for `batch.completed`) and
+`X-PageRush-Metadata` headers, so everything `ConstructEvent` returns is verified. The webhook functions are package-level, so a receiver doesn't
 need a `Client` or an API key.
 
 > **Use the raw body.** Verify the exact bytes you received. Do not decode JSON and encode it again
@@ -272,7 +367,8 @@ need a `Client` or an API key.
 
 > **Deliveries can repeat.** Delivery is at-least-once, and `X-PageRush-Job-Id` (`event.JobID`) is the
 > same on every attempt. Ignore job IDs you have already handled, and record a job ID only after your
-> work for it succeeded, so a failed attempt is retried.
+> work for it succeeded, so a failed attempt is retried. For `batch.completed`, do the same with
+> `event.BatchID`.
 
 A complete `net/http` receiver ([`examples/webhook-receiver`](examples/webhook-receiver) has the full program):
 
@@ -282,7 +378,7 @@ if secret == "" {
 	log.Fatal("set PAGERUSH_WEBHOOK_SECRET")
 }
 secrets := []string{secret}
-safeJobID := regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+safeID := regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 http.HandleFunc("/webhooks/pagerush", func(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<20))
@@ -295,11 +391,15 @@ http.HandleFunc("/webhooks/pagerush", func(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "invalid signature", http.StatusBadRequest)
 		return
 	}
-	if !safeJobID.MatchString(event.JobID) { // check before using it in a file name
-		http.Error(w, "unexpected job id", http.StatusBadRequest)
+	id := event.JobID
+	if event.Event == pagerush.EventBatchCompleted {
+		id = event.BatchID // batch.completed has a batch ID instead of a job ID
+	}
+	if !safeID.MatchString(id) { // check before using it in a file name
+		http.Error(w, "unexpected id", http.StatusBadRequest)
 		return
 	}
-	if alreadyHandled(event.JobID) {
+	if alreadyHandled(id) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -312,8 +412,12 @@ http.HandleFunc("/webhooks/pagerush", func(w http.ResponseWriter, r *http.Reques
 		}
 	case pagerush.EventPDFFailed:
 		log.Printf("job %s failed: %s", event.JobID, event.Failure.Error.Message)
+	case pagerush.EventBatchCompleted:
+		// No PDFs in the notice: fetch them with client.Batches.DownloadZip(ctx, event.BatchID).
+		log.Printf("batch %s %s: %d of %d rendered", event.BatchID, event.Batch.Status,
+			event.Batch.Succeeded, event.Batch.ItemCount)
 	}
-	markHandled(event.JobID) // only after the work succeeded
+	markHandled(id) // only after the work succeeded
 	w.WriteHeader(http.StatusOK)
 })
 ```
@@ -322,15 +426,22 @@ http.HandleFunc("/webhooks/pagerush", func(w http.ResponseWriter, r *http.Reques
 
 | Field | Contents |
 |---|---|
-| `Event` | `pdf.succeeded` or `pdf.failed` |
-| `JobID` | the job ID (dedupe on it) |
+| `Event` | `pdf.succeeded`, `pdf.failed` or `batch.completed` |
+| `JobID` | the job ID (dedupe on it); empty for `batch.completed` |
+| `BatchID` | the batch ID (`batch.completed` only; dedupe on it) |
+| `Batch` | the finished `*Batch`, without items (`batch.completed` only) |
 | `Timestamp` | the signed timestamp |
 | `PDF` | the PDF bytes (`pdf.succeeded` only) |
 | `Failure` | the parsed failure body: `JobID`, `TemplateID`, `Error{Code, Message}`, `Metadata`, `CreatedAt` (`pdf.failed` only) |
-| `Metadata` | the render's metadata (from `X-PageRush-Metadata` on `pdf.succeeded`, from the body on `pdf.failed`), or nil if absent or not an object of strings |
+| `Metadata` | the render's or batch's metadata (from `X-PageRush-Metadata` on `pdf.succeeded` and `batch.completed`, from the body on `pdf.failed`), or nil if absent or not an object of strings |
 
-For any other event, `PDF` and `Failure` are nil. `ConstructEvent` returns a
-`*WebhookVerificationError` with reason `header` if a `pdf.failed` body is not a JSON object.
+For any other event, `PDF`, `Failure` and `Batch` are nil. `ConstructEvent` returns a
+`*WebhookVerificationError` with reason `header` if a `pdf.failed` body is not a JSON object, or a
+`batch.completed` body is not a JSON object with a `batch` object.
+
+A `batch.completed` notice is signed with the batch ID in `X-PageRush-Batch-Id` in place of the job ID.
+Only that header counts for this event: a `batch.completed` delivery without it fails with reason
+`header`, even if it has an `X-PageRush-Job-Id`.
 
 `VerifyWebhook` and `ConstructEvent` return `pagerush.ErrNoWebhookSecret` (not a verification error)
 if `secrets` is empty or contains an empty string, so a missing environment variable fails loudly
@@ -415,6 +526,7 @@ The client retries failed requests up to `WithMaxRetries` times (default 2):
 |---|---|
 | `GET`, `DELETE` | connection errors, timeouts, 429, 502, 503, 504 |
 | `Render` (which always has an idempotency key) | the same, plus 409 with code `CONFLICT` (an earlier attempt with the same key is still rendering); never `IDEMPOTENCY_CONFLICT` |
+| `Batches.Create` (which always has an idempotency key) | connection errors, timeouts, 429, 502, 503, 504; never `IDEMPOTENCY_CONFLICT` |
 | `Create`, `CreateVersion`, `Publish`, `Rename` | 429 and 503 only, which the API returns before doing anything |
 
 Before retry *n* it waits for the `Retry-After` header (capped at 30 s) or, without one,
@@ -450,6 +562,10 @@ Every method may return `*Error` as described above.
 | `Jobs.Get(ctx, id)` | `GET /v1/jobs/{id}` | `(*Job, error)` |
 | `Jobs.Wait(ctx, id, *WaitOptions)` | polls `GET /v1/jobs/{id}` | `(*Job, error)`; `WAIT_TIMEOUT` if not done in time |
 | `Jobs.Download(ctx, id)` | `GET /v1/jobs/{id}`, then the signed `download_url` | `([]byte, error)`; `FILE_EXPIRED` if no link |
+| `Batches.Create(ctx, templateID, *CreateBatchParams)` | `POST /v1/templates/{id}/batches` | `(*Batch, error)` |
+| `Batches.Get(ctx, id)` | `GET /v1/batches/{id}` | `(*Batch, error)` with `Items` |
+| `Batches.Wait(ctx, id, *WaitOptions)` | polls `GET /v1/batches/{id}` | `(*Batch, error)`; `WAIT_TIMEOUT` if not done in time (defaults 600 s, every 2 s) |
+| `Batches.DownloadZip(ctx, id)` | `GET /v1/batches/{id}/zip` | `([]byte, error)`; 409 `CONFLICT` while rendering, 410 `FILE_EXPIRED`, `INVALID_RESPONSE` if not a ZIP |
 | `RenderResult.WriteFile(path)` | | `error`; `ErrQueued` if the render was queued |
 | `NewTemplateFile(path, contents)` | | `TemplateFile` |
 | `TemplateFileFromPath(localPath, targetPath)` | | `(TemplateFile, error)` |
@@ -458,8 +574,10 @@ Every method may return `*Error` as described above.
 | `String(v)`, `Int(v)`, `Bool(v)` | | pointers for optional fields |
 
 Main types: `Template`, `TemplateVersionSummary`, `TemplateVersion`, `TemplateFile`, `TemplateWithVersion`,
-`TemplateList`, `Job`, `JobError`, `JobDelivery`, `RenderParams`, `RenderResult`, `Error`, `FieldError`,
-`WebhookEvent`, `WebhookFailure`, `WebhookVerificationError`.
+`TemplateList`, `Job`, `JobError`, `JobDelivery`, `RenderParams`, `RenderResult`, `WaitOptions`,
+`CreateBatchParams`, `BatchItemParams`, `Batch`, `BatchItem`, `Error`, `FieldError`, `WebhookEvent`,
+`WebhookFailure`, `WebhookVerificationError`. Constants: `JobStatus*`, `BatchStatus*`, `Event*`
+(including `EventBatchCompleted`), `HeaderWebhook*` and `Code*`.
 
 ## Examples
 
@@ -467,7 +585,8 @@ Each example reads the API key from `PAGERUSH_API_KEY`.
 
 - [`examples/quickstart`](examples/quickstart): create a template, render it, save `invoice.pdf`.
 - [`examples/async-render`](examples/async-render): render with `PreferAsync`; save the PDF if it comes back directly, or wait for the queued job and download it.
-- [`examples/webhook-receiver`](examples/webhook-receiver): a `net/http` server that verifies callbacks and saves each PDF once.
+- [`examples/batch`](examples/batch): render a slice of records, or the rows of a CSV file, as one batch; wait for it and save `invoices.zip`.
+- [`examples/webhook-receiver`](examples/webhook-receiver): a `net/http` server that verifies callbacks, saves each PDF once and logs `batch.completed` notices.
 
 ```sh
 PAGERUSH_API_KEY=pk_live_... go run ./examples/quickstart
@@ -488,9 +607,9 @@ This SDK follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html
 other PageRush SDKs and from the HTTP API version (`v1`). While the version is `0.x`, a minor release
 may contain breaking changes; from `1.0.0` on, breaking changes need a new major version.
 
-Releases are git tags of the form `go/vX.Y.Z` (for example `go/v0.1.0`), as the Go toolchain requires
+Releases are git tags of the form `go/vX.Y.Z` (for example `go/v0.2.0`), as the Go toolchain requires
 for a module in the `go/` subdirectory. `pagerush.Version` holds the SDK version and is sent in the
-`User-Agent` header (`pagerush-go/0.1.0`). See [CHANGELOG.md](CHANGELOG.md).
+`User-Agent` header (`pagerush-go/0.2.0`). See [CHANGELOG.md](CHANGELOG.md).
 
 ## Licence
 

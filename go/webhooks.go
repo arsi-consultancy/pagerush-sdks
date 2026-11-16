@@ -17,10 +17,12 @@ import (
 	"unicode/utf8"
 )
 
-// Webhook header names sent with every callback_url delivery.
+// Webhook header names sent with callback_url deliveries. A batch.completed
+// notice carries X-PageRush-Batch-Id instead of X-PageRush-Job-Id.
 const (
 	HeaderWebhookEvent     = "X-PageRush-Event"
 	HeaderWebhookJobID     = "X-PageRush-Job-Id"
+	HeaderWebhookBatchID   = "X-PageRush-Batch-Id"
 	HeaderWebhookTimestamp = "X-PageRush-Timestamp"
 	HeaderWebhookSignature = "X-PageRush-Signature"
 	HeaderWebhookMetadata  = "X-PageRush-Metadata"
@@ -30,6 +32,9 @@ const (
 const (
 	EventPDFSucceeded = "pdf.succeeded"
 	EventPDFFailed    = "pdf.failed"
+	// EventBatchCompleted is sent once a batch has finished. Its body is JSON
+	// with the Batch (without items), not the PDFs.
+	EventBatchCompleted = "batch.completed"
 )
 
 // DefaultWebhookTolerance is how far the signature timestamp may be from the
@@ -97,8 +102,10 @@ func newWebhookConfig(opts []WebhookOption) webhookConfig {
 
 // VerifyWebhook checks that a callback delivery was signed by PageRush. The
 // signature in the X-PageRush-Signature header covers the X-PageRush-Event,
-// X-PageRush-Job-Id and X-PageRush-Metadata headers as well as the body.
-// Header lookup is case-insensitive.
+// X-PageRush-Job-Id (X-PageRush-Batch-Id for batch.completed) and
+// X-PageRush-Metadata headers as well as the body. For batch.completed only
+// X-PageRush-Batch-Id counts: without it the delivery fails with reason
+// WebhookReasonHeader. Header lookup is case-insensitive.
 //
 // Pass every secret you accept (during a secret rotation, the current and
 // the previous one). VerifyWebhook returns nil if any signature matches, a
@@ -114,9 +121,10 @@ func VerifyWebhook(body []byte, h http.Header, secrets []string, opts ...Webhook
 
 var timestampPattern = regexp.MustCompile(`^[0-9]{1,15}$`)
 
-// signedHeaders are the header values a signature covers.
+// signedHeaders are the header values a signature covers. id is the job ID,
+// or the batch ID for batch.completed.
 type signedHeaders struct {
-	event, jobID, metadata string
+	event, id, metadata string
 }
 
 func verifyWebhook(body []byte, h http.Header, secrets []string, cfg webhookConfig) (signedHeaders, int64, error) {
@@ -158,13 +166,20 @@ func verifyWebhook(body []byte, h http.Header, secrets []string, cfg webhookConf
 	if !haveTS || len(sigs) == 0 {
 		return sh, 0, headerError("need t=<unix seconds> and at least one v2=<hex> in " + HeaderWebhookSignature)
 	}
-	var hasEvent, hasJobID bool
+	var hasEvent, hasID bool
 	sh.event, hasEvent = lookupHeader(h, HeaderWebhookEvent)
-	sh.jobID, hasJobID = lookupHeader(h, HeaderWebhookJobID)
-	sh.metadata, _ = lookupHeader(h, HeaderWebhookMetadata)
-	if !hasEvent || !hasJobID {
-		return sh, 0, headerError("missing " + HeaderWebhookEvent + " or " + HeaderWebhookJobID)
+	if !hasEvent {
+		return sh, 0, headerError("missing " + HeaderWebhookEvent)
 	}
+	idHeader := HeaderWebhookJobID
+	if sh.event == EventBatchCompleted {
+		idHeader = HeaderWebhookBatchID
+	}
+	sh.id, hasID = lookupHeader(h, idHeader)
+	if !hasID {
+		return sh, 0, headerError("missing " + idHeader)
+	}
+	sh.metadata, _ = lookupHeader(h, HeaderWebhookMetadata)
 
 	age := math.Abs(float64(cfg.now().Unix() - ts))
 	if age > cfg.tolerance.Seconds() {
@@ -172,7 +187,7 @@ func verifyWebhook(body []byte, h http.Header, secrets []string, cfg webhookConf
 	}
 
 	// The signed string uses the timestamp exactly as it appears in the header.
-	prefix := rawTS + "\n" + sh.event + "\n" + sh.jobID + "\n" + sh.metadata + "\n"
+	prefix := rawTS + "\n" + sh.event + "\n" + sh.id + "\n" + sh.metadata + "\n"
 	for _, secret := range secrets {
 		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write([]byte(prefix))
@@ -188,23 +203,30 @@ func verifyWebhook(body []byte, h http.Header, secrets []string, cfg webhookConf
 }
 
 // WebhookEvent is a verified callback delivery. Every field comes from
-// signed data. For an event other than pdf.succeeded and pdf.failed, PDF and
-// Failure are nil.
+// signed data. For an event other than pdf.succeeded, pdf.failed and
+// batch.completed, PDF, Failure and Batch are nil.
 type WebhookEvent struct {
-	// Event is EventPDFSucceeded or EventPDFFailed.
+	// Event is EventPDFSucceeded, EventPDFFailed or EventBatchCompleted.
 	Event string `json:"event"`
-	// JobID identifies the job. It is the same on every retry of a delivery;
-	// delivery is at-least-once, so ignore job IDs you have already handled.
+	// JobID identifies the job ("" for batch.completed). It is the same on
+	// every retry of a delivery; delivery is at-least-once, so ignore job
+	// IDs you have already handled.
 	JobID string `json:"job_id"`
+	// BatchID identifies the batch (batch.completed only). Like JobID, it is
+	// the same on every retry of a delivery.
+	BatchID string `json:"batch_id,omitempty"`
+	// Batch is the finished batch, without items (batch.completed only).
+	Batch *Batch `json:"batch,omitempty"`
 	// Timestamp is the signed t value of the signature header.
 	Timestamp time.Time `json:"timestamp"`
 	// PDF is the document (pdf.succeeded only).
 	PDF []byte `json:"pdf,omitempty"`
 	// Failure is the parsed body (pdf.failed only).
 	Failure *WebhookFailure `json:"failure,omitempty"`
-	// Metadata is the job's metadata: from the X-PageRush-Metadata header on
-	// pdf.succeeded, from the body on pdf.failed. It is nil if absent or not
-	// a JSON object of strings.
+	// Metadata is the job's or batch's metadata: from the
+	// X-PageRush-Metadata header on pdf.succeeded and batch.completed, from
+	// the body on pdf.failed. It is nil if absent or not a JSON object of
+	// strings.
 	Metadata map[string]string `json:"metadata"`
 }
 
@@ -223,7 +245,8 @@ type WebhookFailure struct {
 // ConstructEvent verifies a callback delivery, as VerifyWebhook does, and
 // parses it. It returns the same errors as VerifyWebhook, and a
 // *WebhookVerificationError with reason WebhookReasonHeader if a pdf.failed
-// body is not a JSON object.
+// body is not a JSON object, or a batch.completed body is not a JSON object
+// with a batch object.
 //
 // body must be the exact bytes received.
 func ConstructEvent(body []byte, h http.Header, secrets []string, opts ...WebhookOption) (*WebhookEvent, error) {
@@ -231,7 +254,12 @@ func ConstructEvent(body []byte, h http.Header, secrets []string, opts ...Webhoo
 	if err != nil {
 		return nil, err
 	}
-	ev := &WebhookEvent{Event: sh.event, JobID: sh.jobID, Timestamp: time.Unix(ts, 0).UTC()}
+	ev := &WebhookEvent{Event: sh.event, Timestamp: time.Unix(ts, 0).UTC()}
+	if ev.Event == EventBatchCompleted {
+		ev.BatchID = sh.id
+	} else {
+		ev.JobID = sh.id
+	}
 	switch ev.Event {
 	case EventPDFSucceeded:
 		ev.PDF = body
@@ -248,6 +276,21 @@ func ConstructEvent(body []byte, h http.Header, secrets []string, opts ...Webhoo
 		f := raw.WebhookFailure
 		f.Metadata = decodeMetadata(raw.RawMetadata)
 		ev.Failure, ev.Metadata = &f, f.Metadata
+	case EventBatchCompleted:
+		var raw struct {
+			Batch json.RawMessage `json:"batch"`
+		}
+		trimmed := bytes.TrimSpace(body)
+		if !bytes.HasPrefix(trimmed, []byte("{")) || json.Unmarshal(trimmed, &raw) != nil ||
+			!bytes.HasPrefix(bytes.TrimSpace(raw.Batch), []byte("{")) {
+			return nil, headerError("batch.completed body is not a JSON object with a batch object")
+		}
+		var b Batch
+		if err := json.Unmarshal(raw.Batch, &b); err != nil {
+			return nil, headerError("batch.completed body has a malformed batch object")
+		}
+		ev.Batch = &b
+		ev.Metadata = decodeMetadata([]byte(sh.metadata))
 	}
 	return ev, nil
 }

@@ -169,23 +169,81 @@ result = client.templates.render(
 print("queued", result.job_id)
 ```
 
+### Batches
+
+A batch renders one template once per item (1 to 1,000 items) in the background and collects the PDFs in one
+ZIP. Each item is `{"data": ..., "filename": ...}`; `filename` is optional and names the PDF inside the ZIP.
+
+```python
+import pagerush
+
+client = pagerush.PageRush()
+
+records = [
+    {"number": "INV-001", "customer": "Example Ltd"},
+    {"number": "INV-002", "customer": "Sample GmbH"},
+]
+batch = client.batches.create(
+    "tpl_123",
+    items=[{"data": record, "filename": record["number"]} for record in records],
+    metadata={"run": "2026-11"},  # optional, as for render; also version, delete_after_download, callback_url
+)
+
+batch = client.batches.wait(batch["id"], timeout=600, interval=2)  # polls until succeeded, partial or failed
+print(batch["status"], batch["succeeded"], "succeeded,", batch["failed"], "failed")
+for item in batch["items"]:
+    if item["error"]:
+        print(item["index"], item["error"]["code"], item["error"]["message"])
+
+if batch["succeeded"]:
+    with open("invoices.zip", "wb") as f:
+        f.write(client.batches.download_zip(batch["id"]))
+```
+
+From a CSV file, turn each row into an item. `items` takes any iterable, so a generator works:
+
+```python
+import csv
+
+with open("invoices.csv", newline="", encoding="utf-8") as f:
+    batch = client.batches.create("tpl_123", items=({"data": row} for row in csv.DictReader(f)))
+```
+
+- `batches.create` returns the queued `Batch` (HTTP 202) without `items`. `batches.get` and `batches.wait` return
+  it with `items`: `index`, `job_id`, `status`, `filename`, `bytes`, `renders`, `error`.
+- `batches.wait` returns partial and failed batches rather than raising; it raises `PageRushError` (status 0) with
+  code `WAIT_TIMEOUT` if the batch is not finished in time.
+- `batches.download_zip` sends your API key (the batch's `zip_url` is an API URL, not a signed link). While the
+  batch is still rendering it raises `PageRushError` with code `CONFLICT` (409, `retry_after` set); when no PDFs are
+  left (expired, or deleted by `delete_after_download` after a complete download) it raises `FILE_EXPIRED` (410).
+- `batches.create` sends an `Idempotency-Key` like `render` does, so a retry never creates a second batch. The
+  server refuses a batch your quota and credits cannot cover (402 `QUOTA_EXCEEDED`) and a fourth unfinished batch
+  (429 `CONCURRENCY_LIMIT`). The SDK does not split large batches.
+- With `callback_url`, PageRush POSTs a signed `batch.completed` notice when the batch finishes (see
+  [Webhooks](#webhooks)).
+
+A complete program is in
+[`examples/batch.py`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/python/examples/batch.py).
+
 ### Webhooks
 
 Each delivery carries `X-PageRush-Event` (`pdf.succeeded` with the PDF as the body, or `pdf.failed` with a JSON
 body), `X-PageRush-Job-Id`, `X-PageRush-Metadata` (on `pdf.succeeded`, when the job has metadata) and
 `X-PageRush-Signature`. The signature covers the timestamp, the event, job id and metadata headers, and the body, so
-every field of a verified event can be trusted. The webhook functions need no API key, so use the
-`pagerush.webhooks` module directly:
+every field of a verified event can be trusted. A batch's `batch.completed` notice is signed the same way, with
+`X-PageRush-Batch-Id` in place of `X-PageRush-Job-Id`; its JSON body is `{"event", "batch"}`. The webhook functions
+need no API key, so use the `pagerush.webhooks` module directly:
 
 ```python
 from pagerush import webhooks
 
 event = webhooks.construct_event(raw_body, request_headers, secret)  # verifies first
-event.event  # "pdf.succeeded" | "pdf.failed"
-event.job_id
+event.event  # "pdf.succeeded" | "pdf.failed" | "batch.completed"
+event.job_id  # None for batch.completed
 event.pdf  # bytes (pdf.succeeded only)
 event.failure  # parsed JSON body (pdf.failed only): {"error": {"code", "message"}, ...}
 event.metadata  # dict of strings, or None
+event.batch_id, event.batch  # batch.completed only: the batch id and the Batch (without items)
 
 webhooks.verify(raw_body, request_headers, secret)  # only check the signature
 ```
@@ -194,14 +252,17 @@ webhooks.verify(raw_body, request_headers, secret)  # only check the signature
   bytes change and verification fails.
 - **Pass the request headers as they are.** Any mapping or object with `.items()` works; names are matched
   case-insensitively.
-- **Deduplicate on `job_id`.** Delivery is at-least-once, and the job id is the same on every retry. Record a job
-  as handled only after your work succeeded, so a failed attempt is delivered again.
-- **Validate `job_id` before using it in a file name**, for example with `^[A-Za-z0-9_-]{1,64}$`.
+- **Deduplicate on `job_id`** (on `batch_id` for `batch.completed`). Delivery is at-least-once, and the id is the
+  same on every retry. Record a delivery as handled only after your work succeeded, so a failed attempt is
+  delivered again.
+- **Validate the id before using it in a file name**, for example with `^[A-Za-z0-9_-]{1,64}$`.
+- **`batch.completed` carries no PDFs.** Download the ZIP with `client.batches.download_zip(event.batch_id)`, which
+  needs your API key.
 - **Pass a real secret.** An empty secret, or an empty list, raises `ValueError`. Check that your environment
   variable is set at startup.
 - **Secret rotation.** Pass a list to accept either secret: `construct_event(body, headers, [new, old])`.
 - Signatures older or newer than `tolerance` seconds (default 300) are rejected.
-- `event.metadata` is `None` when the job has no metadata or it is not a JSON object of strings.
+- `event.metadata` is `None` when the job or batch has no metadata or it is not a JSON object of strings.
 - On failure both functions raise `WebhookVerificationError`, whose `reason` is `"header"`, `"timestamp"` or
   `"signature"`.
 
@@ -219,8 +280,8 @@ app = Flask(__name__)
 SECRET = os.environ.get("PAGERUSH_WEBHOOK_SECRET", "")
 if not SECRET:
     raise SystemExit("Set PAGERUSH_WEBHOOK_SECRET")
-JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
-handled_jobs = set()  # use your database in production
+DELIVERY_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+handled = set()  # use your database in production
 
 
 @app.post("/pagerush/webhook")
@@ -229,20 +290,24 @@ def pagerush_webhook():
         event = webhooks.construct_event(request.get_data(), request.headers, SECRET)
     except WebhookVerificationError as err:
         abort(400, f"invalid signature ({err.reason})")
-    if not JOB_ID.fullmatch(event.job_id):
-        abort(400, "unexpected job id")
+    # batch.completed carries a batch id; the pdf.* events carry a job id.
+    delivery_id = event.batch_id if event.event == "batch.completed" else event.job_id
+    if delivery_id is None or not DELIVERY_ID.fullmatch(delivery_id):
+        abort(400, "unexpected id")
 
-    if event.job_id in handled_jobs:
+    if delivery_id in handled:
         return "", 200
 
     if event.event == "pdf.succeeded":
-        with open(f"{event.job_id}.pdf", "wb") as f:
+        with open(f"{delivery_id}.pdf", "wb") as f:
             f.write(event.pdf)
     elif event.event == "pdf.failed":
-        print("render failed", event.job_id, event.failure["error"])
+        print("render failed", delivery_id, event.failure["error"])
+    elif event.event == "batch.completed":
+        print("batch", delivery_id, event.batch["status"], event.batch["succeeded"], "succeeded")
 
-    # Record the job only after the work succeeded. If it raised, the 500 makes PageRush retry.
-    handled_jobs.add(event.job_id)
+    # Record the delivery only after the work succeeded. If it raised, the 500 makes PageRush retry.
+    handled.add(delivery_id)
     return "", 200
 ```
 
@@ -291,6 +356,7 @@ The client retries failed attempts up to `max_retries` times (default 2):
 |---|---|
 | GET, DELETE | connection errors, timeouts, 429, 502, 503, 504 |
 | render | the same, plus 409 with code `CONFLICT` (an earlier attempt with the same idempotency key is still rendering) |
+| batches.create | connection errors, timeouts, 429, 502, 503, 504 (it always carries an idempotency key) |
 | create, create_version, publish, rename | 429 and 503 only (the server rejected the request before doing anything) |
 
 Before retry *n* the client waits `Retry-After` seconds when the response has a usable value for that header (at
@@ -357,6 +423,10 @@ contain header values. `repr(HTTPRequest)` hides the `Authorization` header and 
 | `jobs.get(job_id)` | `GET /v1/jobs/{id}` | `Job` |
 | `jobs.wait(job_id, *, timeout=120.0, interval=1.0)` | polls `jobs.get` | `Job` (status `succeeded` or `failed`) |
 | `jobs.download(job_id)` | `jobs.get`, then `GET download_url` | `bytes` |
+| `batches.create(template_id, *, items, version=None, metadata=None, delete_after_download=None, callback_url=None, idempotency_key=None)` | `POST /v1/templates/{id}/batches` | `Batch` (HTTP 202, without `items`) |
+| `batches.get(batch_id)` | `GET /v1/batches/{id}` | `Batch` (with `items`) |
+| `batches.wait(batch_id, *, timeout=600.0, interval=2.0)` | polls `batches.get` | `Batch` (status `succeeded`, `partial` or `failed`); `WAIT_TIMEOUT` when it gives up |
+| `batches.download_zip(batch_id)` | `GET /v1/batches/{id}/zip` | `bytes` (ZIP); `CONFLICT` (409) while rendering, `FILE_EXPIRED` (410), `INVALID_RESPONSE` for a 200 that is not `application/zip` |
 | `webhooks.verify(...)`, `webhooks.construct_event(...)` | none | see below |
 
 All methods raise `PageRushError` (or `PageRushConnectionError`) on failure.
@@ -368,8 +438,12 @@ All methods raise `PageRushError` (or `PageRushConnectionError`) on failure.
   `ValueError`.
 - `construct_event(raw_body, headers, secret, *, tolerance=300, now=None) -> WebhookEvent`: verifies, then
   parses. `headers` is any mapping or object with `.items()`; names are matched case-insensitively. Raises
-  `WebhookVerificationError` (reason `"header"` also when a `pdf.failed` body is not a JSON object), or
-  `ValueError` if the secret is empty.
+  `WebhookVerificationError` (reason `"header"` also when a `pdf.failed` body is not a JSON object, or a
+  `batch.completed` body is not a JSON object with a `batch` object), or `ValueError` if the secret is empty.
+- The id header is `X-PageRush-Batch-Id` when the event is `batch.completed` and `X-PageRush-Job-Id` otherwise;
+  a `batch.completed` delivery with only a job id header fails with reason `"header"`.
+- Constants: `SIGNATURE_HEADER`, `EVENT_HEADER`, `JOB_ID_HEADER`, `BATCH_ID_HEADER`, `METADATA_HEADER`,
+  `BATCH_COMPLETED`, `DEFAULT_TOLERANCE`.
 
 ### Helpers
 
@@ -381,9 +455,11 @@ All methods raise `PageRushError` (or `PageRushConnectionError`) on failure.
 
 - `RenderResult` (dataclass): `queued`, `pdf`, `job_id`, `template_version`, `engine`, `page_count`, `warnings`,
   `request_id`, `filename`, `job`; `save(path)` writes the PDF and raises `ValueError` if the render was queued.
-- `WebhookEvent` (dataclass): `event`, `job_id`, `timestamp`, `pdf`, `failure`, `metadata`.
+- `WebhookEvent` (dataclass): `event`, `job_id` (`None` for `batch.completed`), `timestamp`, `pdf`, `failure`,
+  `metadata`, `batch_id`, `batch`.
 - `TypedDict`s: `Template`, `TemplateVersionSummary`, `TemplateVersion`, `TemplateFile`, `TemplateList`,
-  `TemplateWithVersion`, `Job`, `JobError`, `JobDelivery`, `ErrorItem`.
+  `TemplateWithVersion`, `Job`, `JobError`, `JobDelivery`, `Batch`, `BatchItem`, `BatchItemInput`, `ErrorItem`.
+- `JobStatus`, `BatchStatus`: the status strings.
 - Exceptions: `PageRushError`, `PageRushConnectionError(PageRushError)`, `WebhookVerificationError`.
 - Transport: `HTTPRequest`, `HTTPResponse`, `Transport`, `urllib_transport`.
 
@@ -391,7 +467,8 @@ All methods raise `PageRushError` (or `PageRushConnectionError`) on failure.
 
 - [`examples/quickstart.py`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/python/examples/quickstart.py): create, render, save.
 - [`examples/async_render.py`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/python/examples/async_render.py): `prefer_async`, `jobs.wait`, `jobs.download`.
-- [`examples/webhook_receiver.py`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/python/examples/webhook_receiver.py): standard-library webhook receiver.
+- [`examples/batch.py`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/python/examples/batch.py): a batch from CSV rows, `batches.wait`, `batches.download_zip`.
+- [`examples/webhook_receiver.py`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/python/examples/webhook_receiver.py): standard-library webhook receiver, including `batch.completed`.
 
 They read the key from `PAGERUSH_API_KEY`.
 

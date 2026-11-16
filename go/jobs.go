@@ -19,11 +19,14 @@ type JobsService struct {
 	client *Client
 }
 
-// WaitOptions configure Jobs.Wait. Zero values use the defaults.
+// WaitOptions configure Jobs.Wait and Batches.Wait. Zero values use the
+// defaults.
 type WaitOptions struct {
-	// Timeout is how long to wait in total (default 120 s).
+	// Timeout is how long to wait in total (default 120 s for Jobs.Wait,
+	// 600 s for Batches.Wait).
 	Timeout time.Duration
-	// Interval is the pause between polls (default 1 s).
+	// Interval is the pause between polls (default 1 s for Jobs.Wait, 2 s
+	// for Batches.Wait).
 	Interval time.Duration
 }
 
@@ -44,7 +47,27 @@ func (s *JobsService) Get(ctx context.Context, id string) (*Job, error) {
 // If the job is still running after opts.Timeout, Wait returns an *Error with
 // Status 0 and Code CodeWaitTimeout. opts may be nil.
 func (s *JobsService) Wait(ctx context.Context, id string, opts *WaitOptions) (*Job, error) {
-	timeout, interval := DefaultWaitTimeout, DefaultWaitInterval
+	var job *Job
+	err := s.client.poll(ctx, opts, DefaultWaitTimeout, DefaultWaitInterval, func() (bool, error) {
+		j, err := s.Get(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		job = j
+		return j.Done(), nil
+	}, func(timeout time.Duration) *Error {
+		return clientError(CodeWaitTimeout, "job %s did not finish within %s (status %s)", id, timeout, job.Status)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// poll calls check until it reports done or fails, pausing between calls,
+// and returns onTimeout's error once the wait timeout has passed. Zero
+// values in opts use the given defaults. The pause stops when ctx is done.
+func (c *Client) poll(ctx context.Context, opts *WaitOptions, timeout, interval time.Duration, check func() (bool, error), onTimeout func(time.Duration) *Error) error {
 	if opts != nil {
 		if opts.Timeout > 0 {
 			timeout = opts.Timeout
@@ -53,25 +76,25 @@ func (s *JobsService) Wait(ctx context.Context, id string, opts *WaitOptions) (*
 			interval = opts.Interval
 		}
 	}
-	deadline := s.client.now().Add(timeout)
+	deadline := c.now().Add(timeout)
 	for {
-		job, err := s.Get(ctx, id)
+		done, err := check()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if job.Done() {
-			return job, nil
+		if done {
+			return nil
 		}
-		remaining := deadline.Sub(s.client.now())
+		remaining := deadline.Sub(c.now())
 		if remaining <= 0 {
-			return nil, clientError(CodeWaitTimeout, "job %s did not finish within %s (status %s)", id, timeout, job.Status)
+			return onTimeout(timeout)
 		}
 		pause := interval
 		if pause > remaining {
 			pause = remaining
 		}
-		if err := s.client.sleep(ctx, pause); err != nil {
-			return nil, connectionError(ctx, err)
+		if err := c.sleep(ctx, pause); err != nil {
+			return connectionError(ctx, err)
 		}
 	}
 }

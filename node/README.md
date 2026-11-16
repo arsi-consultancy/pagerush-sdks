@@ -70,7 +70,7 @@ const controller = new AbortController();
 await client.templates.get("tpl_123", { signal: controller.signal, timeout: 10_000, maxRetries: 0 });
 ```
 
-An aborted call rejects with the signal's reason (an `AbortError` by default) and is not retried. Aborting also cancels a pending retry wait or `jobs.wait` poll, and clears its timer.
+An aborted call rejects with the signal's reason (an `AbortError` by default) and is not retried. Aborting also cancels a pending retry wait or `jobs.wait` / `batches.wait` poll, and clears its timer.
 
 Request and response fields use the API's own snake_case names (`live_version`, `next_cursor`, `delete_after_download`). Options that belong to the SDK itself, such as `idempotencyKey`, `preferAsync` and `maxRetries`, use camelCase.
 
@@ -182,6 +182,58 @@ const result = await client.templates.render(template.id, {
 console.log(result.queued, result.job_id); // true, "job_..."
 ```
 
+### Batches
+
+A batch renders one template once per item (up to 1,000 items) and collects the PDFs into a ZIP. `batches.create` returns at once with the queued batch; wait for it, then download the ZIP:
+
+```ts
+import { writeFile } from "node:fs/promises";
+import { PageRush } from "pagerush";
+
+const client = new PageRush();
+const customers = [
+  { id: "C-001", name: "Ada Lovelace", total: 120 },
+  { id: "C-002", name: "Grace Hopper", total: 80 },
+];
+
+const created = await client.batches.create(template.id, {
+  items: customers.map((c) => ({ data: c, filename: `${c.id}.pdf` })), // filename is optional
+  metadata: { run: "2026-11" }, // optional, as for renders
+  // version, delete_after_download and callback_url work as for renders
+});
+
+const batch = await client.batches.wait(created.id); // polls every 2 s, for up to 10 minutes
+console.log(batch.status, batch.succeeded, batch.failed); // "succeeded" | "partial" | "failed"
+for (const item of batch.items ?? []) {
+  if (item.error) console.error(item.index, item.error.code, item.error.message);
+}
+
+if (batch.succeeded > 0) await writeFile("invoices.zip", await client.batches.downloadZip(batch.id));
+```
+
+Items come from any list of records. For a CSV with a header row, map each row to `{ data }`:
+
+```ts
+import { readFile } from "node:fs/promises";
+
+// A minimal reader for CSV without quoted fields; use a CSV library for real files.
+const [header, ...rows] = (await readFile("customers.csv", "utf8")).trim().split(/\r?\n/);
+const keys = header!.split(",");
+const items = rows.map((row) => {
+  const cells = row.split(",");
+  return { data: Object.fromEntries(keys.map((k, i) => [k, cells[i] ?? ""])) };
+});
+const created = await client.batches.create(template.id, { items });
+```
+
+`batches.wait` returns the batch once it is `succeeded`, `partial` (some items failed) or `failed`; it doesn't throw for failed items. It throws a `PageRushError` with code `WAIT_TIMEOUT` if the batch is still running after `timeout` (default 600000 ms). `batches.get` returns the batch with its `items`: `{ index, job_id, status, filename, bytes, renders, error }`.
+
+`batches.downloadZip` sends your API key (the batch's `zip_url` needs it, unlike a job's signed `download_url`). While the batch is still rendering it throws status 409 with code `CONFLICT` and `retry_after`; once no PDFs are left it throws status 410 with code `FILE_EXPIRED`.
+
+Like renders, `batches.create` always sends an `Idempotency-Key` (a random UUID unless you pass `idempotencyKey`) and reuses it across retries, so a retry never creates a second batch. The server refuses a batch your quota and credits can't cover (402 `QUOTA_EXCEEDED`) and a fourth unfinished batch (429 `CONCURRENCY_LIMIT`). The SDK doesn't split large lists into several batches. A complete program is in [`examples/batch.ts`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/node/examples/batch.ts).
+
+With `callback_url`, PageRush also POSTs a signed `batch.completed` notice when the batch has finished (see Webhooks).
+
 ### Webhooks
 
 PageRush sends `pdf.succeeded` (the body is the PDF) or `pdf.failed` (the body is JSON) to your `callback_url`. Each delivery is signed with your project's webhook secret: the signature in `X-PageRush-Signature` covers the timestamp, the event, job id and metadata headers, and the raw body. `constructEvent` verifies the signature and timestamp, then parses the delivery:
@@ -190,18 +242,27 @@ PageRush sends `pdf.succeeded` (the body is the PDF) or `pdf.failed` (the body i
 import { constructEvent } from "pagerush";
 
 const event = await constructEvent(rawBody, headers, process.env.PAGERUSH_WEBHOOK_SECRET!);
-event.event; // "pdf.succeeded" | "pdf.failed"
-event.job_id; // dedupe on this
+event.event; // "pdf.succeeded" | "pdf.failed" | "batch.completed"
+event.job_id; // dedupe on this (null for batch.completed)
 event.pdf; // Uint8Array for pdf.succeeded, else null
 event.failure; // { error: { code, message }, ... } for pdf.failed, else null
 event.metadata; // the render's metadata, or null
+```
+
+A batch's `batch.completed` notice is signed the same way, with `X-PageRush-Batch-Id` in place of `X-PageRush-Job-Id`. For it, `constructEvent` returns `job_id: null`, `batch_id` (dedupe on this) and `batch` (the `Batch` without `items`). The body is only a summary: download the PDFs with `client.batches.downloadZip(event.batch_id!)`, which needs an API key.
+
+```ts
+if (event.event === "batch.completed") {
+  event.batch_id; // "bat_..."
+  event.batch; // { id, status, item_count, succeeded, failed, zip_url, metadata, ... }
+}
 ```
 
 Every field comes from signed data. Use `verify(rawBody, headers, secret)` if you only need the check. Both throw `WebhookVerificationError` with a `reason` of `header`, `timestamp` (older or newer than `tolerance`, default 300 seconds) or `signature`. During a secret rotation, pass both secrets as an array: `constructEvent(rawBody, headers, [newSecret, oldSecret])`. These functions don't need an API key, and are also available as `client.webhooks`. A missing or empty secret is a setup mistake, so it throws a `TypeError` rather than a `WebhookVerificationError`: check that `PAGERUSH_WEBHOOK_SECRET` is set when your server starts.
 
 > **Use the raw body.** The signature covers the exact bytes PageRush sent. Pass the unparsed request body (`Buffer`, `Uint8Array`, `ArrayBuffer` or string). If you parse JSON and serialise it again, the bytes change and verification fails.
 
-> **Dedupe on `job_id`.** Delivery is at-least-once: a callback can arrive more than once, always with the same `X-PageRush-Job-Id`. Answer 2xx quickly and ignore repeats. Record a job id as processed only after your work has succeeded, so a failed attempt is retried. Check `job_id` against `^[A-Za-z0-9_-]{1,64}$` before using it in a file name.
+> **Dedupe on `job_id`** (or `batch_id` for `batch.completed`). Delivery is at-least-once: a callback can arrive more than once, always with the same `X-PageRush-Job-Id` (or `X-PageRush-Batch-Id`). Answer 2xx quickly and ignore repeats. Record a job id as processed only after your work has succeeded, so a failed attempt is retried. Check `job_id` against `^[A-Za-z0-9_-]{1,64}$` before using it in a file name.
 
 A complete Express receiver. `express.raw()` keeps the body as a `Buffer`:
 
@@ -219,22 +280,25 @@ const processed = new Set<string>(); // use your database in production
 app.post("/pagerush", express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
   try {
     const event = await constructEvent(req.body, req.headers, secret);
-    if (processed.has(event.job_id)) {
+    const id = event.job_id ?? event.batch_id ?? ""; // batch.completed carries batch_id
+    if (processed.has(id)) {
       res.sendStatus(200);
       return;
     }
 
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(event.job_id)) {
-      res.status(400).send("unexpected job id");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+      res.status(400).send("unexpected id");
       return;
     }
 
     if (event.event === "pdf.succeeded") {
-      await writeFile(`${event.job_id}.pdf`, event.pdf!);
+      await writeFile(`${id}.pdf`, event.pdf!);
     } else if (event.event === "pdf.failed") {
       console.error(event.failure?.error.code, event.failure?.error.message);
+    } else if (event.event === "batch.completed") {
+      console.log(`batch ${id}: ${event.batch?.status}`); // then client.batches.downloadZip(id)
     }
-    processed.add(event.job_id); // only after the work succeeded, so a failed attempt is retried
+    processed.add(id); // only after the work succeeded, so a failed attempt is retried
     res.sendStatus(200);
   } catch (err) {
     if (err instanceof WebhookVerificationError) {
@@ -249,7 +313,7 @@ app.post("/pagerush", express.raw({ type: "*/*", limit: "50mb" }), async (req, r
 app.listen(3000);
 ```
 
-Register this route before any global `express.json()` middleware, or that middleware will consume the body first. A dependency-free version using `node:http` is in [`examples/webhook-receiver.ts`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/node/examples/webhook-receiver.ts). In a Fetch-style handler (Workers, Hono, Bun), pass `await request.arrayBuffer()` and `request.headers`.
+Register this route before any global `express.json()` middleware, or that middleware will consume the body first. A dependency-free version using `node:http`, which also downloads a finished batch's ZIP, is in [`examples/webhook-receiver.ts`](https://github.com/arsi-consultancy/pagerush-sdks/blob/main/node/examples/webhook-receiver.ts). In a Fetch-style handler (Workers, Hono, Bun), pass `await request.arrayBuffer()` and `request.headers`.
 
 ### Errors
 
@@ -302,6 +366,7 @@ Codes are plain strings, so new server codes come through unchanged. `ErrorCodes
 The SDK retries a failed call up to `maxRetries` times (default 2, so at most 3 attempts):
 
 - `GET` and `DELETE`: on connection errors, timeouts, 429, 502, 503 and 504.
+- `batches.create`: the same as `GET`. It always carries an idempotency key, so a retry never creates a second batch. `IDEMPOTENCY_CONFLICT` is never retried.
 - Renders: the same, plus 409 with code `CONFLICT`, which means the server is still rendering an earlier attempt with the same idempotency key. Renders are safe to retry because they always carry an idempotency key. `IDEMPOTENCY_CONFLICT` (the same key with a different body) is never retried.
 - `create`, `createVersion`, `publish` and `rename`: only on 429 and 503, which the server returns before doing any work. They are not retried on connection errors, 502 or 504, because the change may already have been made.
 
@@ -309,7 +374,7 @@ Before retry _n_ it waits for `Retry-After` when the server sends it (capped at 
 
 ## API reference
 
-All methods return promises. Every method of `templates` and `jobs` accepts an optional last argument `RequestOptions`: `{ signal?, timeout?, maxRetries? }`.
+All methods return promises. Every method of `templates`, `jobs` and `batches` accepts an optional last argument `RequestOptions`: `{ signal?, timeout?, maxRetries? }`.
 
 ### `new PageRush(options?)`
 
@@ -349,6 +414,17 @@ Throws `TypeError` if there is no API key, the key contains spaces or control ch
 | `wait(id, { timeout?, interval?, signal? })` | `Job` (`succeeded` or `failed`) | `WAIT_TIMEOUT` (defaults: 120000 ms, 1000 ms) |
 | `download(id)`                               | `Uint8Array`                    | `FILE_EXPIRED` if there is no `download_url`  |
 
+### `client.batches`
+
+| method                                                                                                       | HTTP                              | returns                                      | throws                                                                   |
+| ------------------------------------------------------------------------------------------------------------ | --------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------ |
+| `create(templateId, { items, version?, metadata?, delete_after_download?, callback_url?, idempotencyKey? })` | `POST /v1/templates/{id}/batches` | `Batch` (queued)                             | `QUOTA_EXCEEDED`, `CONCURRENCY_LIMIT`, `VALIDATION_FAILED`               |
+| `get(id)`                                                                                                    | `GET /v1/batches/{id}`            | `Batch` with `items`                         | `NOT_FOUND`                                                              |
+| `wait(id, { timeout?, interval?, signal? })`                                                                 | polls `get`                       | `Batch` (`succeeded`, `partial` or `failed`) | `WAIT_TIMEOUT` (defaults: 600000 ms, 2000 ms)                            |
+| `downloadZip(id)`                                                                                            | `GET /v1/batches/{id}/zip`        | `Uint8Array` (the ZIP)                       | 409 `CONFLICT` (still rendering), 410 `FILE_EXPIRED`, `INVALID_RESPONSE` |
+
+`items` are `{ data, filename? }`, 1 to 1,000 of them. `Batch`: `{ id, status, template_id, template_version, item_count, succeeded, failed, zip_url, expires_at, metadata, delete_after_download, delivery, created_at, finished_at, items? }`. `BatchItem`: `{ index, job_id, status, filename, bytes, renders, error }`.
+
 ### Webhooks
 
 | function                                                                  | returns                 | throws                     |
@@ -356,14 +432,14 @@ Throws `TypeError` if there is no API key, the key contains spaces or control ch
 | `verify(rawBody, headers, secretOrSecrets, { tolerance?, now? })`         | `Promise<void>`         | `WebhookVerificationError` |
 | `constructEvent(rawBody, headers, secretOrSecrets, { tolerance?, now? })` | `Promise<WebhookEvent>` | `WebhookVerificationError` |
 
-`tolerance` and `now` are in seconds. `headers` may be a Fetch `Headers` or a Node `req.headers` object. `WebhookEvent`: `{ event, job_id, timestamp, pdf, failure, metadata }`. Both are also exported together as `webhooks` and available as `client.webhooks`.
+`tolerance` and `now` are in seconds. `headers` may be a Fetch `Headers` or a Node `req.headers` object. `WebhookEvent`: `{ event, job_id, batch_id, batch, timestamp, pdf, failure, metadata }`; `batch_id` and `batch` are set for `batch.completed` (where `job_id` is null) and null otherwise. Both are also exported together as `webhooks` and available as `client.webhooks`.
 
 ### Helpers and types
 
 - `templateFile(path, contents)`: builds a `TemplateFile` (`{ path, content, encoding }`) from a string, `Uint8Array` or `ArrayBuffer`.
 - `fileFromPath(localPath, targetPath?)`: reads a local file into a `TemplateFile` (Node, Bun, Deno).
 - Errors: `PageRushError`, `PageRushConnectionError`, `WebhookVerificationError`, `ErrorCodes`.
-- Types: `Template`, `TemplateVersion`, `TemplateVersionSummary`, `TemplateFile`, `TemplatePage`, `TemplateWithVersion`, `Job`, `JobStatus`, `RenderOptions`, `RenderResult`, `RequestOptions`, `Sleep`, `WaitOptions`, `WebhookEvent`, `WebhookFailure`, `JsonValue`.
+- Types: `Template`, `TemplateVersion`, `TemplateVersionSummary`, `TemplateFile`, `TemplatePage`, `TemplateWithVersion`, `Job`, `JobStatus`, `Batch`, `BatchStatus`, `BatchItem`, `BatchItemInput`, `CreateBatchOptions`, `RenderOptions`, `RenderResult`, `RequestOptions`, `Sleep`, `WaitOptions`, `WebhookEvent`, `WebhookFailure`, `JsonValue`.
 - `VERSION`: this SDK's version string.
 
 Every public symbol has TSDoc comments, so your editor shows this documentation inline. `pnpm run docs` builds TypeDoc HTML into `docs/`.

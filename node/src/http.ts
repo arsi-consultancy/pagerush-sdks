@@ -1,7 +1,7 @@
 /** HTTP transport with timeouts, retries, redirects and error mapping. @internal @module */
 
 import { type ErrorDetail, PageRushConnectionError, PageRushError } from "./errors";
-import { abortReason, sleepUnlessAborted, utf8Decode, utf8Encode } from "./internal";
+import { abortReason, sleepUnlessAborted, utf8Decode, utf8Encode, uuidv4 } from "./internal";
 import { VERSION } from "./version";
 
 /** Per-call options accepted by every API method. */
@@ -16,7 +16,8 @@ export interface RequestOptions {
 
 /**
  * Which failures a request may be retried on.
- * - `safe`: GET and DELETE: connection errors, timeouts, 429, 502, 503, 504.
+ * - `safe`: GET and DELETE, and batch-create POSTs (which always carry an idempotency key):
+ *   connection errors, timeouts, 429, 502, 503, 504.
  * - `render`: render POSTs, which always carry an idempotency key: as `safe`, plus 409 with code
  *   `CONFLICT` (the server is still rendering an earlier attempt with the same key).
  * - `unsafe`: other POST/PATCH: only 429 and 503, which the server sends before doing anything.
@@ -95,6 +96,25 @@ export function redactUrl(url: string): string {
 /** A {@link PageRushError} with code `VALIDATION_FAILED` and status 0, raised before anything is sent. */
 export function validationError(title: string, cause?: unknown): PageRushError {
   return new PageRushError({ status: 0, code: "VALIDATION_FAILED", title, cause });
+}
+
+/** The server's rule for Idempotency-Key values. */
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_\-:.]{1,255}$/;
+
+/**
+ * The `Idempotency-Key` to send: `key` after checking it against the server's rule, or a new random
+ * UUID v4. Call it once per method call, so retries reuse the same key.
+ *
+ * @throws {@link PageRushError} with code `VALIDATION_FAILED` if `key` breaks the rule.
+ */
+export async function idempotencyKey(key: string | undefined): Promise<string> {
+  if (key === undefined) return uuidv4();
+  if (!IDEMPOTENCY_KEY.test(key)) {
+    throw validationError(
+      "idempotencyKey must be 1-255 characters from A-Z, a-z, 0-9, '_', '-', ':' and '.'",
+    );
+  }
+  return key;
 }
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;

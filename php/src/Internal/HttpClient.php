@@ -24,6 +24,8 @@ final class HttpClient
     private const MAX_RETRY_AFTER = 30.0;
     /** Upper bound for a parsed Retry-After, so huge or infinite values stay finite. */
     private const RETRY_AFTER_LIMIT = 1_000_000_000.0;
+    /** The API's rule for Idempotency-Key values. */
+    private const IDEMPOTENCY_KEY = '/^[A-Za-z0-9_\-:.]{1,255}$/D';
 
     /**
      * Returns the Authorization header value. A closure rather than a string property, so that
@@ -101,6 +103,7 @@ final class HttpClient
      * @param string|null               $unwrap   Return this key's object instead, as the API wraps
      *                                            single resources (`{"template": {...}}`).
      * @param array<string, bool>       $required Keys the object must have; true means the value must be an array.
+     * @param array<string, string>     $headers  Extra headers.
      *
      * @return array<string, mixed>
      *
@@ -114,8 +117,9 @@ final class HttpClient
         RetryPolicy $retry = RetryPolicy::Idempotent,
         ?string $unwrap = null,
         array $required = [],
+        array $headers = [],
     ): array {
-        $response = $this->send($method, $path, $body === null ? null : self::encode($body), $retry);
+        $response = $this->send($method, $path, $body === null ? null : self::encode($body), $retry, $headers);
         $data = self::decodeObject($response);
 
         if ($unwrap !== null) {
@@ -334,6 +338,22 @@ final class HttpClient
     public static function segment(string|int $value): string
     {
         return rawurlencode((string) $value);
+    }
+
+    /**
+     * Returns the given idempotency key after checking it against the API's rule, or a new UUID v4 when
+     * none is given. The caller reuses the result across retries.
+     *
+     * @throws InvalidArgumentException When the key is not 1-255 characters from `A-Z a-z 0-9 _ - : .`.
+     */
+    public static function idempotencyKey(mixed $given): string
+    {
+        $key = $given ?? self::uuid4();
+        if (!is_string($key) || preg_match(self::IDEMPOTENCY_KEY, $key) !== 1) {
+            throw new InvalidArgumentException('idempotency_key must be 1-255 characters from A-Z, a-z, 0-9, _ - : .');
+        }
+
+        return $key;
     }
 
     /**

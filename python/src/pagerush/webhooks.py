@@ -6,10 +6,10 @@ These functions need no API key, so a receiver can use them without a client::
 
     event = webhooks.construct_event(raw_body, request_headers, webhook_secret)
 
-The signature covers the timestamp, the ``X-PageRush-Event``, ``X-PageRush-Job-Id`` and
-``X-PageRush-Metadata`` headers, and the body. Always pass the **raw request body bytes** exactly
-as received: parsing JSON and serialising it again changes the bytes and the signature will not
-match.
+The signature covers the timestamp, the ``X-PageRush-Event``, ``X-PageRush-Job-Id`` (or, for
+``batch.completed``, ``X-PageRush-Batch-Id``) and ``X-PageRush-Metadata`` headers, and the body.
+Always pass the **raw request body bytes** exactly as received: parsing JSON and serialising it
+again changes the bytes and the signature will not match.
 """
 
 from __future__ import annotations
@@ -20,11 +20,14 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple, Union, cast
 
 from ._errors import WebhookVerificationError
+from ._types import Batch
 
 __all__ = [
+    "BATCH_COMPLETED",
+    "BATCH_ID_HEADER",
     "DEFAULT_TOLERANCE",
     "EVENT_HEADER",
     "JOB_ID_HEADER",
@@ -45,13 +48,20 @@ SIGNATURE_HEADER = "X-PageRush-Signature"
 """``t=<unix seconds>,v2=<hex HMAC-SHA256>``, with two ``v2`` values during a secret rotation."""
 
 EVENT_HEADER = "X-PageRush-Event"
-"""``pdf.succeeded`` or ``pdf.failed``. Signed."""
+"""``pdf.succeeded``, ``pdf.failed`` or ``batch.completed``. Signed."""
 
 JOB_ID_HEADER = "X-PageRush-Job-Id"
 """The job id, the same on every delivery attempt. Signed."""
 
+BATCH_ID_HEADER = "X-PageRush-Batch-Id"
+"""The batch id on ``batch.completed`` deliveries, in place of the job id. Signed."""
+
 METADATA_HEADER = "X-PageRush-Metadata"
-"""The job's metadata as a JSON object (``pdf.succeeded`` only, when there is metadata). Signed."""
+"""The job's or batch's metadata as a JSON object (``pdf.succeeded`` and ``batch.completed``, when
+there is metadata). Signed."""
+
+BATCH_COMPLETED = "batch.completed"
+"""The event sent when a batch finishes; it carries ``X-PageRush-Batch-Id`` instead of a job id."""
 
 _TIMESTAMP = re.compile(r"[0-9]{1,15}")
 
@@ -71,22 +81,28 @@ class WebhookEvent:
     """A verified webhook delivery. Every field comes from signed data.
 
     Attributes:
-        event: ``"pdf.succeeded"`` or ``"pdf.failed"``.
-        job_id: The job id. Delivery is at-least-once; ignore job ids you have already handled.
+        event: ``"pdf.succeeded"``, ``"pdf.failed"`` or ``"batch.completed"``.
+        job_id: The job id, or ``None`` for ``batch.completed``. Delivery is at-least-once; ignore
+            ids you have already handled.
         timestamp: Unix seconds from the signature header.
         pdf: The PDF bytes (``pdf.succeeded`` only), else ``None``.
         failure: The parsed JSON body (``pdf.failed`` only): ``{event, job_id, template_id,
             error: {code, message}, metadata, created_at}``, else ``None``.
-        metadata: The job's metadata, or ``None`` if there is none or it is not a JSON object of
-            strings.
+        metadata: The job's or batch's metadata, or ``None`` if there is none or it is not a JSON
+            object of strings.
+        batch_id: The batch id (``batch.completed`` only), else ``None``.
+        batch: The body's ``batch`` object, a :class:`pagerush.Batch` without ``items``
+            (``batch.completed`` only), else ``None``.
     """
 
     event: str
-    job_id: str
+    job_id: Optional[str]
     timestamp: int
     pdf: Optional[bytes]
     failure: Optional[Dict[str, Any]]
     metadata: Optional[Dict[str, str]]
+    batch_id: Optional[str] = None
+    batch: Optional[Batch] = None
 
 
 Event = WebhookEvent
@@ -138,22 +154,26 @@ def _parse_signature(header: Optional[str]) -> Tuple[int, List[str]]:
 def _verify(
     body: bytes, headers: HeadersLike, secret: Secrets, tolerance: int, now: Optional[int]
 ) -> Tuple[int, str, str, Optional[str]]:
-    """Verify a delivery and return ``(timestamp, event, job_id, metadata header)``."""
+    """Verify a delivery and return ``(timestamp, event, id, metadata header)``.
+
+    The id is the batch id for ``batch.completed`` and the job id otherwise.
+    """
     secrets = _secrets(secret)
     timestamp, signatures = _parse_signature(_header(headers, SIGNATURE_HEADER))
     event = _header(headers, EVENT_HEADER)
-    job_id = _header(headers, JOB_ID_HEADER)
     if not event:
         raise WebhookVerificationError("header", f"The delivery has no {EVENT_HEADER} header")
-    if not job_id:
-        raise WebhookVerificationError("header", f"The delivery has no {JOB_ID_HEADER} header")
+    id_header = BATCH_ID_HEADER if event == BATCH_COMPLETED else JOB_ID_HEADER
+    delivery_id = _header(headers, id_header)
+    if not delivery_id:
+        raise WebhookVerificationError("header", f"The delivery has no {id_header} header")
     metadata = _header(headers, METADATA_HEADER)
 
     current = int(time.time()) if now is None else now
     if abs(current - timestamp) > tolerance:
         raise WebhookVerificationError("timestamp", f"Signature timestamp is more than {tolerance}s from now")
 
-    prefix = f"{timestamp}\n{event}\n{job_id}\n{metadata or ''}\n"
+    prefix = f"{timestamp}\n{event}\n{delivery_id}\n{metadata or ''}\n"
     signed = prefix.encode("utf-8") + body
     matched = False
     for key in secrets:
@@ -164,7 +184,7 @@ def _verify(
                 matched = True
     if not matched:
         raise WebhookVerificationError("signature", "No signature matches the webhook secret")
-    return timestamp, event, job_id, metadata
+    return timestamp, event, delivery_id, metadata
 
 
 def verify(
@@ -176,6 +196,9 @@ def verify(
     now: Optional[int] = None,
 ) -> int:
     """Check a delivery's ``X-PageRush-Signature`` against its signed headers and raw body.
+
+    The id header is ``X-PageRush-Batch-Id`` when the event is ``batch.completed`` and
+    ``X-PageRush-Job-Id`` otherwise; only that one counts.
 
     Args:
         raw_body: The exact bytes received (a ``str`` is encoded as UTF-8).
@@ -189,8 +212,8 @@ def verify(
 
     Raises:
         WebhookVerificationError: ``reason`` is ``"header"`` (signature header missing or
-            malformed, or no event or job id header), ``"timestamp"`` (outside ``tolerance``) or
-            ``"signature"`` (no ``v2`` value matches any secret).
+            malformed, or no event header or no id header for the event), ``"timestamp"``
+            (outside ``tolerance``) or ``"signature"`` (no ``v2`` value matches any secret).
         ValueError: ``secret`` is empty, an empty list, or contains an empty string.
     """
     return _verify(_to_bytes(raw_body), headers, secret, tolerance, now)[0]
@@ -203,6 +226,24 @@ def _string_map(value: Any) -> Optional[Dict[str, str]]:
     return None
 
 
+def _json_body(body: bytes) -> Any:
+    """The parsed JSON body, or ``None`` if it is not valid UTF-8 JSON."""
+    try:
+        return json.loads(body.decode("utf-8"))
+    except ValueError:
+        return None
+
+
+def _metadata_header(value: Optional[str]) -> Optional[Dict[str, str]]:
+    """The ``X-PageRush-Metadata`` header as a JSON object of strings, else ``None``."""
+    if not value:
+        return None
+    try:
+        return _string_map(json.loads(value))
+    except ValueError:
+        return None
+
+
 def construct_event(
     raw_body: RawBody,
     headers: HeadersLike,
@@ -213,8 +254,10 @@ def construct_event(
 ) -> WebhookEvent:
     """Verify a delivery and parse it into a :class:`WebhookEvent`.
 
-    ``metadata`` comes from ``X-PageRush-Metadata`` on ``pdf.succeeded`` and from the body on
-    ``pdf.failed``. An unknown event is returned as is, with ``pdf`` and ``failure`` set to ``None``.
+    ``metadata`` comes from ``X-PageRush-Metadata`` on ``pdf.succeeded`` and ``batch.completed``,
+    and from the body on ``pdf.failed``. For ``batch.completed``, ``batch_id`` and ``batch`` are set
+    and ``job_id`` is ``None``. An unknown event is returned as is, with ``pdf`` and ``failure`` set
+    to ``None``.
 
     Args:
         raw_body: The exact bytes received.
@@ -225,34 +268,48 @@ def construct_event(
 
     Raises:
         WebhookVerificationError: As for :func:`verify`, and ``reason`` ``"header"`` if a
-            ``pdf.failed`` body is not a JSON object.
+            ``pdf.failed`` body is not a JSON object, or a ``batch.completed`` body is not a JSON
+            object with a ``batch`` object.
         ValueError: ``secret`` is empty, an empty list, or contains an empty string.
     """
     body = _to_bytes(raw_body)
-    timestamp, event, job_id, metadata_header = _verify(body, headers, secret, tolerance, now)
+    timestamp, event, delivery_id, metadata_header = _verify(body, headers, secret, tolerance, now)
+    job_id: Optional[str] = delivery_id
     pdf: Optional[bytes] = None
     failure: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, str]] = None
+    batch_id: Optional[str] = None
+    batch: Optional[Batch] = None
 
     if event == "pdf.failed":
-        try:
-            parsed = json.loads(body.decode("utf-8"))
-        except ValueError:
-            parsed = None
+        parsed = _json_body(body)
         if not isinstance(parsed, dict):
             raise WebhookVerificationError("header", "A pdf.failed body must be a JSON object")
         failure = parsed
         metadata = _string_map(parsed.get("metadata"))
     elif event == "pdf.succeeded":
         pdf = body
-        if metadata_header:
-            try:
-                metadata = _string_map(json.loads(metadata_header))
-            except ValueError:
-                metadata = None
+        metadata = _metadata_header(metadata_header)
+    elif event == BATCH_COMPLETED:
+        parsed = _json_body(body)
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("batch"), dict):
+            raise WebhookVerificationError(
+                "header", "A batch.completed body must be a JSON object with a batch object"
+            )
+        job_id = None
+        batch_id = delivery_id
+        batch = cast(Batch, parsed["batch"])
+        metadata = _metadata_header(metadata_header)
 
     return WebhookEvent(
-        event=event, job_id=job_id, timestamp=timestamp, pdf=pdf, failure=failure, metadata=metadata
+        event=event,
+        job_id=job_id,
+        timestamp=timestamp,
+        pdf=pdf,
+        failure=failure,
+        metadata=metadata,
+        batch_id=batch_id,
+        batch=batch,
     )
 
 

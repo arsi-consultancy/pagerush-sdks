@@ -24,7 +24,8 @@ const fromBase64 = (s: string) => new Uint8Array(Buffer.from(s, "base64"));
 
 describe("webhook test vectors", () => {
   it("loads the shared vectors", () => {
-    expect(vectors.length).toBeGreaterThanOrEqual(24);
+    expect(vectors.length).toBeGreaterThanOrEqual(28);
+    expect(vectors.filter((v) => v.headers["X-PageRush-Event"] === "batch.completed")).toHaveLength(4);
   });
 
   it.each(vectors.map((v) => [v.name, v] as const))("verify: %s", async (_name, v) => {
@@ -50,8 +51,20 @@ describe("webhook test vectors", () => {
         now: v.now,
       });
       expect(event.event).toBe(v.headers["X-PageRush-Event"]);
-      expect(event.job_id).toBe(v.headers["X-PageRush-Job-Id"]);
       expect(event.timestamp).toBe(Number(/t=(\d+)/.exec(v.headers["X-PageRush-Signature"]!)![1]));
+      if (event.event === "batch.completed") {
+        expect(event.job_id).toBeNull();
+        expect(event.batch_id).toBe(v.headers["X-PageRush-Batch-Id"]);
+        expect(event.batch).toEqual(JSON.parse(new TextDecoder().decode(body)).batch);
+        expect(event.pdf).toBeNull();
+        expect(event.failure).toBeNull();
+        const raw = v.headers["X-PageRush-Metadata"];
+        expect(event.metadata).toEqual(raw ? JSON.parse(raw) : null);
+        return;
+      }
+      expect(event.job_id).toBe(v.headers["X-PageRush-Job-Id"]);
+      expect(event.batch_id).toBeNull();
+      expect(event.batch).toBeNull();
       if (event.event === "pdf.succeeded") {
         expect(event.pdf).toEqual(body);
         expect(event.failure).toBeNull();
@@ -78,6 +91,8 @@ const PDF = new TextEncoder().encode("%PDF-1.7\n%%EOF\n");
 interface Delivery {
   event?: string;
   jobId?: string;
+  /** Sent as X-PageRush-Batch-Id (instead of X-PageRush-Job-Id) and signed in the job id's place. */
+  batchId?: string;
   metadata?: string;
   t?: number | string;
   secret?: string;
@@ -86,17 +101,17 @@ interface Delivery {
 /** Headers for a delivery of `body`, signed the way the server signs them. */
 function signed(body: Uint8Array | string, d: Delivery = {}): Record<string, string> {
   const event = d.event ?? "pdf.succeeded";
-  const jobId = d.jobId ?? "job_123";
+  const id = d.batchId ?? d.jobId ?? "job_123";
   const t = d.t ?? T;
   const hex = createHmac("sha256", d.secret ?? SECRET)
-    .update(`${t}\n${event}\n${jobId}\n${d.metadata ?? ""}\n`)
+    .update(`${t}\n${event}\n${id}\n${d.metadata ?? ""}\n`)
     .update(body)
     .digest("hex");
   const headers: Record<string, string> = {
     "X-PageRush-Signature": `t=${t},v2=${hex}`,
     "X-PageRush-Event": event,
-    "X-PageRush-Job-Id": jobId,
   };
+  headers[d.batchId !== undefined ? "X-PageRush-Batch-Id" : "X-PageRush-Job-Id"] = id;
   if (d.metadata !== undefined) headers["X-PageRush-Metadata"] = d.metadata;
   return headers;
 }
@@ -233,6 +248,8 @@ describe("webhooks.constructEvent", () => {
     expect(event).toEqual({
       event: "pdf.succeeded",
       job_id: "job_123",
+      batch_id: null,
+      batch: null,
       timestamp: T,
       pdf: PDF,
       failure: null,
@@ -254,6 +271,8 @@ describe("webhooks.constructEvent", () => {
     expect(event).toEqual({
       event: "pdf.failed",
       job_id: "job_123",
+      batch_id: null,
+      batch: null,
       timestamp: T,
       pdf: null,
       failure,
@@ -309,5 +328,86 @@ describe("webhooks.constructEvent", () => {
     const body = JSON.stringify({ event: "pdf.failed", job_id: "job_123", error: {}, metadata: { n: 1 } });
     const event = await constructEvent(body, signed(body, { event: "pdf.failed" }), SECRET, { now: T });
     expect(event.metadata).toBeNull();
+  });
+});
+
+describe("batch.completed", () => {
+  const summary = {
+    id: "bat_123",
+    status: "partial",
+    template_id: "tpl_1",
+    template_version: 3,
+    item_count: 3,
+    succeeded: 2,
+    failed: 1,
+    zip_url: "https://api.example.test/v1/batches/bat_123/zip",
+    expires_at: "2026-01-02T00:00:00.000Z",
+    metadata: { run: "nov" },
+    delete_after_download: false,
+    delivery: { status: "pending", attempts: 1, error: null },
+    created_at: "2026-01-01T00:00:00.000Z",
+    finished_at: "2026-01-01T00:01:00.000Z",
+  };
+  const body = JSON.stringify({ event: "batch.completed", batch: summary });
+  const delivery = { event: "batch.completed", batchId: "bat_123", metadata: '{"run":"nov"}' };
+
+  it("parses a batch.completed delivery", async () => {
+    const event = await constructEvent(body, lowerCased(signed(body, delivery)), SECRET, { now: T });
+    expect(event).toEqual({
+      event: "batch.completed",
+      job_id: null,
+      batch_id: "bat_123",
+      batch: summary,
+      timestamp: T,
+      pdf: null,
+      failure: null,
+      metadata: { run: "nov" },
+    });
+  });
+
+  it("gives metadata null without the metadata header", async () => {
+    const headers = signed(body, { event: "batch.completed", batchId: "bat_123" });
+    await expect(constructEvent(body, headers, SECRET, { now: T })).resolves.toMatchObject({
+      batch_id: "bat_123",
+      metadata: null,
+    });
+  });
+
+  it("signs the batch id in the job id's place", async () => {
+    await expect(verify(body, signed(body, delivery), SECRET, { now: T })).resolves.toBeUndefined();
+    const swapped = { ...signed(body, delivery), "X-PageRush-Batch-Id": "bat_999" };
+    await expect(verify(body, swapped, SECRET, { now: T })).rejects.toMatchObject({ reason: "signature" });
+  });
+
+  it("needs the batch id header: a job id header doesn't count", async () => {
+    const { "X-PageRush-Batch-Id": batchId, ...rest } = signed(body, delivery);
+    const headers = { ...rest, "X-PageRush-Job-Id": batchId! };
+    const err = await verify(body, headers, SECRET, { now: T }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WebhookVerificationError);
+    expect(err).toMatchObject({ reason: "header" });
+  });
+
+  it("ignores a batch id header on job events", async () => {
+    const headers: Record<string, string> = { ...signed(PDF), "X-PageRush-Batch-Id": "bat_123" };
+    await expect(constructEvent(PDF, headers, SECRET, { now: T })).resolves.toMatchObject({
+      job_id: "job_123",
+      batch_id: null,
+    });
+    const { "X-PageRush-Job-Id": _jobId, ...withoutJobId } = headers;
+    await expect(verify(PDF, withoutJobId, SECRET, { now: T })).rejects.toMatchObject({ reason: "header" });
+  });
+
+  it.each([
+    ["not JSON", "<html>"],
+    ["a JSON array", "[]"],
+    ["an object without batch", '{"event":"batch.completed"}'],
+    ["an object whose batch is null", '{"event":"batch.completed","batch":null}'],
+    ["an object whose batch is an array", '{"event":"batch.completed","batch":[]}'],
+    ["invalid UTF-8", new Uint8Array([0x7b, 0xff, 0x7d])],
+  ])("rejects a body that is %s with reason header", async (_name, raw) => {
+    const headers = signed(raw, { event: "batch.completed", batchId: "bat_123" });
+    const err = await constructEvent(raw, headers, SECRET, { now: T }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WebhookVerificationError);
+    expect(err).toMatchObject({ reason: "header" });
   });
 });

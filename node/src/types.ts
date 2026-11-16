@@ -203,12 +203,98 @@ export interface RenderResult {
   save(path: string): Promise<void>;
 }
 
-/** Options for {@link Jobs.wait}. */
+/** Options for {@link Jobs.wait} and {@link Batches.wait}. */
 export interface WaitOptions {
-  /** Give up after this many milliseconds. Default 120000. */
+  /** Give up after this many milliseconds. Default 120000 for `jobs.wait`, 600000 for `batches.wait`. */
   timeout?: number | undefined;
-  /** Poll every this many milliseconds. Default 1000. */
+  /** Poll every this many milliseconds. Default 1000 for `jobs.wait`, 2000 for `batches.wait`. */
   interval?: number | undefined;
   /** Stops waiting (and any request in flight). The promise rejects with the signal's reason. */
   signal?: AbortSignal | undefined;
+}
+
+/** One document in a batch: the data for one render. */
+export interface BatchItemInput {
+  /** Any JSON value. The template reads it with `#let data = json("data.json")`. */
+  data: unknown;
+  /** File name for this PDF in the ZIP. Letters, numbers, spaces, `-`, `.`, `_`. */
+  filename?: string | undefined;
+}
+
+/** Options for {@link Batches.create}. */
+export interface CreateBatchOptions {
+  /** The documents to render: 1-1,000 items. The SDK sends them as one batch; it never splits them. */
+  items: BatchItemInput[];
+  /** Render this version instead of the live one. */
+  version?: number | undefined;
+  /** Up to 20 string pairs (at most 4 KB as JSON), echoed on the batch and in the callback. */
+  metadata?: Record<string, string> | undefined;
+  /** Delete the PDFs once the ZIP has been downloaded instead of keeping them. Defaults to the project setting. */
+  delete_after_download?: boolean | undefined;
+  /** POST a signed `batch.completed` notice to this https URL when the batch has finished. */
+  callback_url?: string | undefined;
+  /**
+   * Sent as `Idempotency-Key`: 1-255 characters from `A-Z a-z 0-9 _ - : .`; anything else throws
+   * `VALIDATION_FAILED` before the request is sent. If omitted, the SDK generates a random UUID v4 and reuses it across
+   * retries of this call, so a retry never creates a second batch.
+   */
+  idempotencyKey?: string | undefined;
+}
+
+/**
+ * Batch status. `succeeded`, `partial` (some items failed) and `failed` are final. Known values are
+ * listed; future values come through as plain strings.
+ */
+export type BatchStatus = "queued" | "rendering" | "succeeded" | "partial" | "failed" | (string & {});
+
+/** One document of a batch, as returned by {@link Batches.get}. */
+export interface BatchItem {
+  /** Position in the `items` you sent, from 0. */
+  index: number;
+  /** The render job for this item. */
+  job_id: string;
+  status: JobStatus;
+  /** The PDF's file name in the ZIP. */
+  filename: string | null;
+  /** Size of the PDF, once rendered. */
+  bytes: number | null;
+  /** Renders this item took (counted against your quota). */
+  renders: number | null;
+  /** Set when `status` is `failed`. */
+  error: { code: string | null; message: string | null } | null;
+}
+
+/** A batch: many renders of one template, collected into a ZIP. */
+export interface Batch {
+  id: string;
+  status: BatchStatus;
+  /** Null once the template has been deleted. */
+  template_id: string | null;
+  /** The template version every item renders with. */
+  template_version: number | null;
+  /** Number of items in the batch. */
+  item_count: number;
+  /** Items rendered so far. */
+  succeeded: number;
+  /** Items that failed so far. */
+  failed: number;
+  /**
+   * Where the ZIP of finished PDFs is served. It needs your API key: download it with
+   * {@link Batches.downloadZip}.
+   */
+  zip_url: string | null;
+  /** When the PDFs are deleted (ISO 8601), or null. */
+  expires_at: string | null;
+  metadata: Record<string, string> | null;
+  delete_after_download: boolean;
+  /** Callback delivery state, when the batch had a `callback_url`. */
+  delivery: {
+    status: "pending" | "delivered" | "failed" | (string & {});
+    attempts: number;
+    error: string | null;
+  } | null;
+  created_at: string;
+  finished_at: string | null;
+  /** The batch's documents. Only present on {@link Batches.get}. */
+  items?: BatchItem[] | undefined;
 }

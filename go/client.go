@@ -54,6 +54,8 @@ type Client struct {
 	Templates *TemplatesService
 	// Jobs reads render jobs, waits for them and downloads their PDFs.
 	Jobs *JobsService
+	// Batches renders many PDFs from one template and downloads them as a ZIP.
+	Batches *BatchesService
 
 	apiKey     string
 	baseURL    string
@@ -144,6 +146,7 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 	c.httpClient = withSafeRedirects(c.httpClient)
 	c.Templates = &TemplatesService{client: c}
 	c.Jobs = &JobsService{client: c}
+	c.Batches = &BatchesService{client: c}
 	return c, nil
 }
 
@@ -201,7 +204,8 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 type retryPolicy int
 
 const (
-	// retrySafe: GET, DELETE and render (which carries an idempotency key).
+	// retrySafe: GET, DELETE and batch create (which carries an idempotency
+	// key).
 	// Retries on connection errors, timeouts, 429, 502, 503 and 504.
 	retrySafe retryPolicy = iota
 	// retryUnsafe: other POST and PATCH requests. Retries only on 429 and 503,

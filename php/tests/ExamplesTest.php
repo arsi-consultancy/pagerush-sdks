@@ -22,7 +22,7 @@ final class ExamplesTest extends TestCase
     public function testTheExpectedExamplesExist(): void
     {
         self::assertSame(
-            ['async-render.php', 'quickstart.php', 'webhook-receiver.php'],
+            ['async-render.php', 'batch.php', 'quickstart.php', 'webhook-receiver.php'],
             array_keys(iterator_to_array(self::examples())),
         );
     }

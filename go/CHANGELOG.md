@@ -8,6 +8,30 @@ Go module versions come from git tags of the form `go/vX.Y.Z`.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+### Added
+
+- `Batches`: `Create` (renders up to 1,000 PDFs from one template in a single request; always sends
+  an `Idempotency-Key`, a random UUID v4 unless you set one, reused on every retry), `Get` (the batch
+  with each item's state), `Wait` (polls every 2 s for up to 10 minutes until the batch is
+  `succeeded`, `partial` or `failed`) and `DownloadZip` (the ZIP of the rendered PDFs, sent with the
+  API key; a 200 that isn't `application/zip` is an `INVALID_RESPONSE` error).
+- Types `CreateBatchParams`, `BatchItemParams`, `Batch` and `BatchItem`, the `BatchStatus*`
+  constants, and `DefaultBatchWaitTimeout` and `DefaultBatchWaitInterval`.
+- Batch create is retried on connection errors, timeouts, 429, 502, 503 and 504, never on
+  `IDEMPOTENCY_CONFLICT`.
+- Webhooks: the `batch.completed` event (`EventBatchCompleted`). `VerifyWebhook` signs it with the
+  `X-PageRush-Batch-Id` header (`HeaderWebhookBatchID`) in the job ID's place, and fails with reason
+  `header` when that header is missing. `ConstructEvent` returns its `BatchID`, `Batch` and
+  `Metadata`, with `JobID` empty.
+- `examples/batch`: renders a slice of records or the rows of a CSV file as one batch and saves the
+  ZIP.
+
+### Changed
+
+- `WaitOptions` is shared by `Jobs.Wait` and `Batches.Wait`; each has its own defaults.
+
 ## [0.1.0] - 2026-11-09
 
 ### Added
@@ -40,5 +64,6 @@ Go module versions come from git tags of the form `go/vX.Y.Z`.
   `Reason`; several secrets accepted during a rotation; `ErrNoWebhookSecret` for a missing or empty
   secret.
 
-[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/go/v0.1.0...HEAD
+[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/go/v0.2.0...HEAD
+[0.2.0]: https://github.com/arsi-consultancy/pagerush-sdks/compare/go/v0.1.0...go/v0.2.0
 [0.1.0]: https://github.com/arsi-consultancy/pagerush-sdks/releases/tag/go/v0.1.0

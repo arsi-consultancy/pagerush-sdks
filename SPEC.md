@@ -49,6 +49,10 @@ fields; that avoids a mapping layer that can drift from the server.
 | `jobs.get(id)` | `GET /v1/jobs/{id}` | `Job` |
 | `jobs.wait(id, { timeout = 120 s, interval = 1 s })` | polls `jobs.get` | `Job` once status is `succeeded` or `failed` (a failed job is returned, not raised); timeout → `PageRushError` status 0, code `WAIT_TIMEOUT` |
 | `jobs.download(id)` | `jobs.get`, then GET `download_url` | PDF bytes. `download_url` null → `PageRushError` code `FILE_EXPIRED`. Do **not** send the Authorization header to `download_url` (it is a signed link). |
+| `batches.create(templateId, options)` | `POST /v1/templates/{id}/batches` | `Batch` (202) |
+| `batches.get(id)` | `GET /v1/batches/{id}` | `Batch` with `items` |
+| `batches.wait(id, { timeout = 600 s, interval = 2 s })` | polls `batches.get` | `Batch` once status is `succeeded`, `partial` or `failed` (returned, not raised); timeout → `PageRushError` status 0, code `WAIT_TIMEOUT` |
+| `batches.downloadZip(id)` | `GET /v1/batches/{id}/zip` (with the Authorization header, `Accept: application/zip`) | ZIP bytes. A 200 that isn't `application/zip` → `INVALID_RESPONSE`. 409 (still rendering), 410 and 429 `RATE_LIMITED` (the batch's 10 ZIP downloads are used up; single PDFs stay available through `jobs.download(item.job_id)`) raise as usual. |
 
 Path segments (`id`) must be URL-encoded.
 
@@ -76,6 +80,24 @@ Response handling:
 - **202** JSON Job: `RenderResult { queued: true, pdf: null, job: Job, job_id: job.id, template_version: job.template_version, ... others null }`.
 - A convenience `save(path)` / `saveTo` / `WriteFile` on the result where idiomatic (errors if queued).
 
+### Batches
+
+`batches.create` options:
+
+| option | wire |
+|---|---|
+| `items` (required, 1–1,000 of `{ data, filename? }`) | body `items` |
+| `version`, `metadata`, `delete_after_download`, `callback_url` | body, same as render |
+| `idempotencyKey` | header `Idempotency-Key`; generated (UUID v4) when not given and reused across retries, as for render |
+
+`Batch`: `{ id, status: "queued" | "rendering" | "succeeded" | "partial" | "failed", template_id, template_version,
+item_count, succeeded, failed, zip_url, expires_at, metadata, delete_after_download, delivery, created_at, finished_at,
+items? }`; `items` (from `batches.get`) are `{ index, job_id, status, filename, bytes, renders, error }`. Expose
+`zip_url` as data; `downloadZip` takes the batch id (the URL needs the API key, unlike a job's `download_url`).
+
+The server refuses a batch the quota and credits can't cover (402 `QUOTA_EXCEEDED`), and a fourth unfinished batch
+(429 `CONCURRENCY_LIMIT`). SDKs don't split or retry batches themselves beyond the retry rules below.
+
 ## Errors
 
 All non-2xx responses raise/return a `PageRushError` (Go: `*pagerush.Error`, usable with `errors.As`) with:
@@ -102,6 +124,8 @@ Retry when **all** of these hold:
    - render POST (always carries an idempotency key): connection error/timeout, 429, 502, 503, 504, and **409 with code
      `CONFLICT`** (the server is still rendering the earlier attempt with the same key and sends `Retry-After: 2`).
      Never retry `IDEMPOTENCY_CONFLICT`.
+   - batch create POST (always carries an idempotency key): connection error/timeout, 429, 502, 503, 504. Never retry
+     `IDEMPOTENCY_CONFLICT`.
    - other POST / PATCH (create, createVersion, publish, rename): **only 429 and 503** (the server
      rejected them before doing anything). Never retry these on connection errors or 502/504.
 
@@ -139,8 +163,15 @@ The server POSTs to `callback_url` with headers:
   the raw body bytes. The event, job id and metadata headers are therefore covered as well as the body. During a
   secret rotation there are two v2 values (new secret first).
 
+A batch's `batch.completed` notice is signed the same way with the batch id in the job id's place: headers
+`X-PageRush-Event: batch.completed`, `X-PageRush-Batch-Id` (instead of `X-PageRush-Job-Id`), `X-PageRush-Timestamp`,
+`X-PageRush-Metadata` (when the batch has metadata), `X-PageRush-Signature`; body JSON `{ event, batch }` where `batch`
+is the `Batch` without `items`. signed = `"<t>\nbatch.completed\n<X-PageRush-Batch-Id>\n<metadata or empty>\n"` + body.
+
 SDK functions (receivers need no API key, so these work without a client):
 - `webhooks.verify(rawBody, headers, secret | secrets[], { tolerance = 300 s, now? })`:
+  the id header is `X-PageRush-Batch-Id` when the event is `batch.completed` and `X-PageRush-Job-Id` otherwise (only
+  that one counts: a batch.completed with only a job id header fails with reason `header`);
   read the four headers case-insensitively (`headers` accepts the language's usual header containers);
   parse the signature header as comma-separated `key=value` pairs (trim whitespace around each pair; ignore unknown keys
   such as an old `v1`); need exactly one `t` of 1–15 digits and at least one `v2`, and the event and job id headers must
@@ -149,7 +180,9 @@ SDK functions (receivers need no API key, so these work without a client):
   → reason `signature`. On failure raise `WebhookVerificationError` with a `reason` (`header` | `timestamp` |
   `signature`). On success return normally (Go: nil error).
 - `webhooks.constructEvent(rawBody, headers, secret(s), opts)`: verifies, then returns
-  `{ event, job_id, timestamp, pdf (bytes, succeeded only), failure (parsed JSON object, failed only), metadata }`.
+  `{ event, job_id, timestamp, pdf (bytes, succeeded only), failure (parsed JSON object, failed only), metadata }`,
+  plus `batch_id` and `batch` (the body's `batch` object) for `batch.completed`, where `job_id` is null. Its
+  `metadata` comes from `X-PageRush-Metadata`; a body that isn't a JSON object with a `batch` object → reason `header`.
   Every field comes from verified data: `event` and `job_id` from their (signed) headers, `timestamp` = `t`.
   `metadata`: from `X-PageRush-Metadata` on `pdf.succeeded`, from the body on `pdf.failed`; null if absent or not a JSON
   object of strings. A `pdf.failed` body that isn't a JSON object → reason `header`. An unknown event is returned with
@@ -178,7 +211,8 @@ auth header and user agent; each method's path, method and body; list pagination
 render 200 (headers parsed into the result), render 202; idempotency key generated and identical across a
 retry; retry on 503 with `Retry-After`; no retry of `create` on 502; no retry after max retries; error mapping
 (problem+json, non-JSON body, request_id fallback to header); jobs.wait; jobs.download without auth header;
-the webhook vectors. An optional live smoke test runs only when `PAGERUSH_API_KEY` is set
+the webhook vectors; batches.create (path, body, generated idempotency key reused across a retry), batches.get,
+batches.wait, batches.downloadZip (auth header sent, non-ZIP 200 rejected), constructEvent for `batch.completed`. An optional live smoke test runs only when `PAGERUSH_API_KEY` is set
 (create a template with `#let data = json("data.json")\nHello #data.name`, render it, check `%PDF`, delete it).
 
 ## Per-SDK README

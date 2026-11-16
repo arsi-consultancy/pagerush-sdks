@@ -99,6 +99,46 @@ func ExampleTemplatesService_Render_async() {
 	}
 }
 
+func ExampleBatchesService_Create() {
+	client, err := pagerush.NewClient("")
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+
+	customers := []struct{ Number, Name string }{{"INV-1", "Ada"}, {"INV-2", "Grace"}}
+	items := make([]pagerush.BatchItemParams, 0, len(customers))
+	for _, c := range customers {
+		items = append(items, pagerush.BatchItemParams{
+			Data:     map[string]any{"number": c.Number, "customer": c.Name},
+			Filename: pagerush.String(c.Number + ".pdf"),
+		})
+	}
+	batch, err := client.Batches.Create(ctx, "tpl_123", &pagerush.CreateBatchParams{Items: items})
+	if err != nil {
+		log.Fatal(err)
+	}
+	batch, err = client.Batches.Wait(ctx, batch.ID, nil) // polls every 2 s for up to 10 minutes
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, item := range batch.Items {
+		if item.Error != nil {
+			log.Printf("item %d failed: %s", item.Index, item.Error.Message)
+		}
+	}
+	if batch.Succeeded == 0 {
+		log.Fatal("no PDFs rendered")
+	}
+	zip, err := client.Batches.DownloadZip(ctx, batch.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := os.WriteFile("invoices.zip", zip, 0o644); err != nil {
+		log.Fatal(err)
+	}
+}
+
 func ExampleTemplatesService_ListAll() {
 	client, err := pagerush.NewClient("")
 	if err != nil {
@@ -168,7 +208,7 @@ func ExampleConstructEvent() {
 	if secret == "" {
 		log.Fatal("set PAGERUSH_WEBHOOK_SECRET")
 	}
-	safeJobID := regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	safeID := regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 	http.HandleFunc("/pagerush", func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body) // the raw bytes, never re-encoded JSON
@@ -181,8 +221,12 @@ func ExampleConstructEvent() {
 			http.Error(w, "invalid signature", http.StatusBadRequest)
 			return
 		}
-		if !safeJobID.MatchString(event.JobID) {
-			http.Error(w, "unexpected job id", http.StatusBadRequest)
+		id := event.JobID
+		if event.Event == pagerush.EventBatchCompleted {
+			id = event.BatchID
+		}
+		if !safeID.MatchString(id) {
+			http.Error(w, "unexpected id", http.StatusBadRequest)
 			return
 		}
 		switch event.Event {
@@ -193,6 +237,9 @@ func ExampleConstructEvent() {
 			}
 		case pagerush.EventPDFFailed:
 			log.Printf("job %s failed: %s", event.JobID, event.Failure.Error.Message)
+		case pagerush.EventBatchCompleted:
+			// The notice has no PDFs: download the ZIP with Batches.DownloadZip.
+			log.Printf("batch %s %s: %d of %d rendered", event.BatchID, event.Batch.Status, event.Batch.Succeeded, event.Batch.ItemCount)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

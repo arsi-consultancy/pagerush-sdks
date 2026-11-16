@@ -36,7 +36,8 @@ function add(name, { fields = succeeded, body = pdf, header, secrets = [CURRENT]
     headers: {
       "X-PageRush-Signature": header,
       "X-PageRush-Event": fields.event,
-      "X-PageRush-Job-Id": fields.job_id,
+      // batch.completed carries the batch id in X-PageRush-Batch-Id; it's signed in the job id's place.
+      [fields.id_header ?? "X-PageRush-Job-Id"]: fields.job_id,
       ...(fields.metadata_header === null ? {} : { "X-PageRush-Metadata": fields.metadata_header }),
     },
     secrets,
@@ -111,6 +112,38 @@ add("empty signature header", { header: "", valid: false, reason: "header" });
 add("spaces after commas", { header: `t=${T}, v2=${good}`, valid: true });
 add("unknown scheme ignored", { header: `t=${T},v0=deadbeef,v2=${good}`, valid: true });
 add("uppercase hex signature", { header: `t=${T},v2=${good.toUpperCase()}`, valid: false, reason: "signature" });
+
+// batch.completed: a JSON body; the batch id header takes the job id header's place in the signature.
+const batchBody = Buffer.from(
+  JSON.stringify({
+    event: "batch.completed",
+    batch: { id: "bat_123", status: "partial", item_count: 3, succeeded: 2, failed: 1, zip_url: "https://pagerush.dev/v1/batches/bat_123/zip" },
+  }),
+);
+const batch = { event: "batch.completed", job_id: "bat_123", metadata_header: '{"run":"nov"}', id_header: "X-PageRush-Batch-Id" };
+const batchSig = sign(CURRENT, batch, batchBody);
+add("batch.completed, with metadata", { fields: batch, body: batchBody, header: `t=${T},v2=${batchSig}`, valid: true });
+const batchNoMeta = { ...batch, metadata_header: null };
+add("batch.completed, no metadata header", {
+  fields: batchNoMeta,
+  body: batchBody,
+  header: `t=${T},v2=${sign(CURRENT, batchNoMeta, batchBody)}`,
+  valid: true,
+});
+add("batch id header changed", {
+  fields: { ...batch, job_id: "bat_999" },
+  body: batchBody,
+  header: `t=${T},v2=${batchSig}`,
+  valid: false,
+  reason: "signature",
+});
+add("batch.completed with a job id header instead of the batch id header", {
+  fields: { ...batch, id_header: "X-PageRush-Job-Id" },
+  body: batchBody,
+  header: `t=${T},v2=${batchSig}`,
+  valid: false,
+  reason: "header",
+});
 
 process.stdout.write(
   `${JSON.stringify(

@@ -28,6 +28,26 @@
 //		log.Fatal(err)
 //	}
 //
+// # Batches
+//
+// Batches.Create renders up to 1,000 PDFs from one template in a single
+// request. Batches.Wait polls until the batch has finished, and
+// Batches.DownloadZip downloads the PDFs as one ZIP:
+//
+//	batch, err := client.Batches.Create(ctx, templateID, &pagerush.CreateBatchParams{
+//		Items: []pagerush.BatchItemParams{
+//			{Data: map[string]any{"name": "Ada"}, Filename: pagerush.String("ada.pdf")},
+//			{Data: map[string]any{"name": "Grace"}, Filename: pagerush.String("grace.pdf")},
+//		},
+//	})
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//	if batch, err = client.Batches.Wait(ctx, batch.ID, nil); err != nil {
+//		log.Fatal(err)
+//	}
+//	zip, err := client.Batches.DownloadZip(ctx, batch.ID)
+//
 // # Errors
 //
 // API errors and connection failures are returned as *Error. Use errors.As
@@ -36,17 +56,19 @@
 //
 // # Retries
 //
-// GET, DELETE and render requests are retried on connection errors, timeouts,
-// 429, 502, 503 and 504. Other POST and PATCH requests are retried only on 429
-// and 503. Retries wait for Retry-After (capped at 30 s) or an exponential
-// backoff, and stop when the context is done. Render requests always carry an
-// Idempotency-Key (a random one if you do not set one), so a retry never renders
-// or charges twice.
+// GET, DELETE, render and batch create requests are retried on connection
+// errors, timeouts, 429, 502, 503 and 504 (renders also on 409 CONFLICT). Other
+// POST and PATCH requests are retried only on 429 and 503. Retries wait for
+// Retry-After (capped at 30 s) or an exponential backoff, and stop when the
+// context is done. Render and batch create requests always carry an
+// Idempotency-Key (a random one if you do not set one), so a retry never
+// renders or charges twice.
 //
 // # Webhooks
 //
-// VerifyWebhook and ConstructEvent check callback_url deliveries. The
-// signature covers the body and the event, job ID and metadata headers. They
+// VerifyWebhook and ConstructEvent check callback_url deliveries, including a
+// batch's batch.completed notice. The signature covers the body and the
+// event, job ID (or batch ID) and metadata headers. They
 // need no Client, only the raw request body, its headers and your webhook
 // secret(s).
 package pagerush

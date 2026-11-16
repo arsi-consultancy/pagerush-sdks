@@ -33,31 +33,43 @@ try {
     exit('Invalid signature: ' . $e->reason);
 }
 
-// The job ID goes into file names below, so accept only the characters job IDs use.
-if (preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $event->job_id) !== 1) {
+// A batch.completed notice carries a batch ID instead of a job ID. The ID goes into file names
+// below, so accept only the characters IDs use.
+$id = $event->job_id ?? $event->batch_id ?? '';
+if (preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $id) !== 1) {
     http_response_code(400);
-    exit('Unexpected job ID');
+    exit('Unexpected ID');
 }
 
-// Delivery is at-least-once: a retry carries the same job ID, so skip IDs you have handled.
-$seenFile = sys_get_temp_dir() . '/pagerush-seen-' . $event->job_id;
+// Delivery is at-least-once: a retry carries the same ID, so skip IDs you have handled.
+$seenFile = sys_get_temp_dir() . '/pagerush-seen-' . $id;
 if (file_exists($seenFile)) {
     http_response_code(200);
     exit('Already handled');
 }
 
 if ($event->event === WebhookEvent::SUCCEEDED && $event->pdf !== null) {
-    if (file_put_contents(sys_get_temp_dir() . '/' . $event->job_id . '.pdf', $event->pdf) === false) {
+    if (file_put_contents(sys_get_temp_dir() . '/' . $id . '.pdf', $event->pdf) === false) {
         // Not recorded as handled, so the API's retry gets another chance.
         http_response_code(500);
         exit('Could not save the PDF');
     }
-    error_log("PDF for job {$event->job_id} saved; metadata: " . json_encode($event->metadata));
+    error_log("PDF for job {$id} saved; metadata: " . json_encode($event->metadata));
 } elseif ($event->event === WebhookEvent::FAILED) {
-    error_log("Job {$event->job_id} failed: " . json_encode($event->failure['error'] ?? null));
+    error_log("Job {$id} failed: " . json_encode($event->failure['error'] ?? null));
+} elseif ($event->event === WebhookEvent::BATCH_COMPLETED) {
+    // The notice has no PDFs: fetch the ZIP with $client->batches->downloadZip($id) (that needs the API key).
+    $batch = $event->batch ?? [];
+    error_log(sprintf(
+        'Batch %s finished: %s (%s of %s succeeded)',
+        $id,
+        json_encode($batch['status'] ?? null),
+        json_encode($batch['succeeded'] ?? null),
+        json_encode($batch['item_count'] ?? null),
+    ));
 }
 
-// Record the job only after the work succeeded, so a failed attempt is retried.
+// Record the ID only after the work succeeded, so a failed attempt is retried.
 touch($seenFile);
 http_response_code(200);
 echo 'OK';
