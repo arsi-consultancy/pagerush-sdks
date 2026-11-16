@@ -171,7 +171,7 @@ print("queued", result.job_id)
 
 ### Batches
 
-A batch renders one template once per item (1 to 1,000 items) in the background and collects the PDFs in one
+A batch renders one template once per item (1 to 10,000 items) in the background and collects the PDFs in one
 ZIP. Each item is `{"data": ..., "filename": ...}`; `filename` is optional and names the PDF inside the ZIP.
 
 ```python

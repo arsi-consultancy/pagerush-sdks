@@ -262,7 +262,7 @@ res, err := client.Templates.Render(ctx, templateID, &pagerush.RenderParams{
 
 ### Batches
 
-A batch renders up to 1,000 PDFs from one template in a single request: one item per document, each
+A batch renders up to 10,000 PDFs from one template in a single request: one item per document, each
 with its own data and an optional file name in the ZIP. `Batches.Create` returns the queued batch
 straight away; `Batches.Wait` polls until it has finished, and `Batches.DownloadZip` downloads the
 PDFs as one ZIP.

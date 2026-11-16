@@ -7,6 +7,10 @@ follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Docs: a batch takes up to 10,000 items (the server raised its limit from 1,000; the SDK never enforced it).
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

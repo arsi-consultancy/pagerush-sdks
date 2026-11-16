@@ -30,7 +30,7 @@
 //
 // # Batches
 //
-// Batches.Create renders up to 1,000 PDFs from one template in a single
+// Batches.Create renders up to 10,000 PDFs from one template in a single
 // request. Batches.Wait polls until the batch has finished, and
 // Batches.DownloadZip downloads the PDFs as one ZIP:
 //

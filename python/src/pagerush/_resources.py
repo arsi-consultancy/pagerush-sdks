@@ -424,7 +424,7 @@ class Jobs:
 class Batches:
     """Batch endpoints (``/v1/templates/{id}/batches``, ``/v1/batches``). Use it as ``client.batches``.
 
-    A batch renders one template once per item (up to 1,000 items) in the background and collects
+    A batch renders one template once per item (up to 10,000 items) in the background and collects
     the PDFs in a ZIP.
     """
 
@@ -451,7 +451,7 @@ class Batches:
 
         Args:
             template_id: The template.
-            items: 1-1,000 items shaped like :class:`pagerush.BatchItemInput`:
+            items: 1-10,000 items shaped like :class:`pagerush.BatchItemInput`:
                 ``{"data": <any JSON>, "filename": "optional-name"}``. Any iterable works, such as a
                 generator over CSV rows.
             version: Render this version instead of the live one.

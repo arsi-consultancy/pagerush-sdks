@@ -226,7 +226,7 @@ $result = $client->templates->render($templateId, [
 
 ### Batches
 
-A batch renders one template with many data records (1 to 1,000 items) and collects the PDFs in a ZIP
+A batch renders one template with many data records (1 to 10,000 items) and collects the PDFs in a ZIP
 file. `create()` returns straight away with the queued batch; the PDFs render in the background.
 
 ```php

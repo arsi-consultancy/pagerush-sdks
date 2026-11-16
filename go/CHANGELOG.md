@@ -8,6 +8,10 @@ Go module versions come from git tags of the form `go/vX.Y.Z`.
 
 ## [Unreleased]
 
+### Changed
+
+- Docs: a batch takes up to 10,000 items (the server raised its limit from 1,000; the SDK never enforced it).
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

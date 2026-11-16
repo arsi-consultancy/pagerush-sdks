@@ -31,7 +31,7 @@ const client = new PageRush();
 
 try {
   const records = parseCsv(await readFile(csvPath, "utf8"));
-  // Up to 1,000 items per batch. File names may use letters, numbers, spaces, "-", "." and "_".
+  // Up to 10,000 items per batch. File names may use letters, numbers, spaces, "-", "." and "_".
   const items: BatchItemInput[] = records.map((record, i) => ({
     data: record,
     filename: `${(record.id ?? String(i + 1)).replace(/[^A-Za-z0-9 ._-]/g, "_")}.pdf`,

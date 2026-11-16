@@ -184,7 +184,7 @@ console.log(result.queued, result.job_id); // true, "job_..."
 
 ### Batches
 
-A batch renders one template once per item (up to 1,000 items) and collects the PDFs into a ZIP. `batches.create` returns at once with the queued batch; wait for it, then download the ZIP:
+A batch renders one template once per item (up to 10,000 items) and collects the PDFs into a ZIP. `batches.create` returns at once with the queued batch; wait for it, then download the ZIP:
 
 ```ts
 import { writeFile } from "node:fs/promises";
@@ -423,7 +423,7 @@ Throws `TypeError` if there is no API key, the key contains spaces or control ch
 | `wait(id, { timeout?, interval?, signal? })`                                                                 | polls `get`                       | `Batch` (`succeeded`, `partial` or `failed`) | `WAIT_TIMEOUT` (defaults: 600000 ms, 2000 ms)                            |
 | `downloadZip(id)`                                                                                            | `GET /v1/batches/{id}/zip`        | `Uint8Array` (the ZIP)                       | 409 `CONFLICT` (still rendering), 410 `FILE_EXPIRED`, `INVALID_RESPONSE` |
 
-`items` are `{ data, filename? }`, 1 to 1,000 of them. `Batch`: `{ id, status, template_id, template_version, item_count, succeeded, failed, zip_url, expires_at, metadata, delete_after_download, delivery, created_at, finished_at, items? }`. `BatchItem`: `{ index, job_id, status, filename, bytes, renders, error }`.
+`items` are `{ data, filename? }`, 1 to 10,000 of them. `Batch`: `{ id, status, template_id, template_version, item_count, succeeded, failed, zip_url, expires_at, metadata, delete_after_download, delivery, created_at, finished_at, items? }`. `BatchItem`: `{ index, job_id, status, filename, bytes, renders, error }`.
 
 ### Webhooks
 

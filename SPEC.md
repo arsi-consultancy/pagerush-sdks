@@ -86,7 +86,7 @@ Response handling:
 
 | option | wire |
 |---|---|
-| `items` (required, 1–1,000 of `{ data, filename? }`) | body `items` |
+| `items` (required, 1–10,000 of `{ data, filename? }`) | body `items` |
 | `version`, `metadata`, `delete_after_download`, `callback_url` | body, same as render |
 | `idempotencyKey` | header `Idempotency-Key`; generated (UUID v4) when not given and reused across retries, as for render |
 

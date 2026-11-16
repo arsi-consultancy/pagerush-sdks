@@ -223,7 +223,7 @@ export interface BatchItemInput {
 
 /** Options for {@link Batches.create}. */
 export interface CreateBatchOptions {
-  /** The documents to render: 1-1,000 items. The SDK sends them as one batch; it never splits them. */
+  /** The documents to render: 1-10,000 items. The SDK sends them as one batch; it never splits them. */
   items: BatchItemInput[];
   /** Render this version instead of the live one. */
   version?: number | undefined;

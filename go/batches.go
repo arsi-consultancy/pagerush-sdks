@@ -33,7 +33,7 @@ type BatchItemParams struct {
 
 // CreateBatchParams are the options for Batches.Create.
 type CreateBatchParams struct {
-	// Items are the documents to render: 1 to 1,000.
+	// Items are the documents to render: 1 to 10,000.
 	Items []BatchItemParams `json:"items"`
 	// Version renders this version instead of the live one.
 	Version *int `json:"version,omitempty"`

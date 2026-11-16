@@ -49,7 +49,7 @@ final class Batches
      * Starts a batch render and returns the queued batch (HTTP 202). The PDFs render in the
      * background: poll with {@see wait()}, or pass `callback_url` to get a `batch.completed` webhook.
      *
-     * Body options (API names): `items` (required: 1-1,000 entries of `['data' => mixed, 'filename' => ?string]`;
+     * Body options (API names): `items` (required: 1-10,000 entries of `['data' => mixed, 'filename' => ?string]`;
      * an array or any iterable, such as a generator over CSV rows), `version`, `metadata` (string => string),
      * `delete_after_download`, `callback_url`.
      *
