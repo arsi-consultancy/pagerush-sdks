@@ -7,11 +7,11 @@ Each SDK is versioned and released on its own. Versions follow [Semantic Version
   breaking changes; call them out under **Changed** / **Removed** in the changelog.
 - **major** (from 1.0.0 on): breaking changes.
 
-A new API feature usually means a minor release of all four SDKs. They don't need to share version numbers.
+A new API feature usually means a minor release of all five SDKs. They don't need to share version numbers.
 
 ## Steps
 
-1. Update the code and tests. Make the change in all four SDKs if it touches `SPEC.md`, and update `SPEC.md` first.
+1. Update the code and tests. Make the change in all five SDKs if it touches `SPEC.md`, and update `SPEC.md` first.
 2. Bump the version in the SDK's single source of truth:
 
    | SDK | File |
@@ -20,6 +20,7 @@ A new API feature usually means a minor release of all four SDKs. They don't nee
    | python | `python/src/pagerush/_version.py` |
    | php | `php/src/Version.php` |
    | go | `go/version.go` |
+   | dotnet | `dotnet/src/PageRush/PageRush.csproj` `<Version>` (the build generates `PageRushClient.Version` from it) |
 
 3. In the SDK's `CHANGELOG.md`, move the `[Unreleased]` entries under a new `## [x.y.z] - YYYY-MM-DD` heading.
 4. Run the SDK's checks (`make check` from the repo root runs all of them).
@@ -31,9 +32,10 @@ A new API feature usually means a minor release of all four SDKs. They don't nee
    | python | `python-vX.Y.Z` | `git tag python-v0.2.0 && git push origin python-v0.2.0` |
    | php | `php-vX.Y.Z` | `git tag php-v0.2.0 && git push origin php-v0.2.0` |
    | go | `go/vX.Y.Z` (the form the Go toolchain expects for a module in `go/`) | `git tag go/v0.2.0 && git push origin go/v0.2.0` |
+   | dotnet | `dotnet-vX.Y.Z` | `git tag dotnet-v0.2.0 && git push origin dotnet-v0.2.0` |
 
    A version with a pre-release suffix (`0.2.0-beta.1`, or `0.2.0b1` for Python) is published as a
-   pre-release: npm tag `next`, and marked as a pre-release on GitHub.
+   pre-release: npm tag `next`, a pre-release version on NuGet, and marked as a pre-release on GitHub.
 
 The tag starts that SDK's release workflow in `.github/workflows/`. It first runs
 `scripts/release-notes.sh`, which stops the release if the tag doesn't match the version source or the
@@ -45,17 +47,19 @@ changelog has no dated entry for it. Then it runs the SDK's checks again and pub
 | python | PyPI | trusted publishing (no token), with attestations |
 | php | Packagist | pushes `php/` to the split repository `arsi-consultancy/pagerush-php` and tags it `vX.Y.Z`; Packagist reads that tag |
 | go | Go module proxy | asks `proxy.golang.org` to fetch the tag |
+| dotnet | NuGet | `dotnet nuget push` of the `.nupkg` and `.snupkg` through trusted publishing (no stored key) |
 
 Each workflow then creates a GitHub release with the changelog entry as its notes.
 
-A tag can't be published twice: npm and PyPI refuse a version that already exists. If a release fails
+A tag can't be published twice: npm, PyPI and NuGet refuse a version that already exists. If a release fails
 before publishing, fix the problem, delete the tag (`git push origin :refs/tags/<tag>` and
 `git tag -d <tag>`), and tag again. After a version is published, release a new patch version instead.
 
 ## One-time setup
 
-1. **GitHub environments.** In this repository's settings, create the environments `npm`, `pypi` and
-   `packagist`, and limit each to tags matching its SDK (`node-v*`, `python-v*`, `php-v*`). Turn on
+1. **GitHub environments.** In this repository's settings, create the environments `npm`, `pypi`,
+   `packagist` and `nuget`, and limit each to tags matching its SDK (`node-v*`, `python-v*`, `php-v*`,
+   `dotnet-v*`). Turn on
    private vulnerability reporting (Settings → Security), which `SECURITY.md` points to.
 2. **npm.** npm only offers trusted publishing for a package that exists, so publish the first version
    by hand: `cd node && npm publish --access public`, logged in as an owner of the `pagerush` package.
@@ -72,3 +76,14 @@ before publishing, fix the problem, delete the tag (`git push origin :refs/tags/
    `https://github.com/arsi-consultancy/pagerush-php` on packagist.org as `pagerush/pagerush-php` and
    turn on its GitHub hook so new tags are picked up automatically.
 5. **Go.** Nothing to set up. The repository must be public for `proxy.golang.org` to fetch it.
+6. **NuGet.** Sign in to nuget.org with the account (or organization) that will own the package `PageRush`.
+   A package ID belongs to whoever pushes it first, so release soon or ask nuget.org to reserve the ID
+   prefix. Under your username, choose **Trusted Publishing** and add a policy: repository owner
+   `arsi-consultancy`, repository `pagerush-sdks`, workflow file `release-dotnet.yml`, environment `nuget`.
+   Its scope must allow pushing new packages for the first release, and new versions of `PageRush`
+   after that. A policy applies to every package its owner owns, so no package has to exist first and the
+   workflow can push version 0.1.0 itself. In this repository, add the variable `NUGET_USER` (Settings →
+   Secrets and variables → Actions → Variables) with the nuget.org profile name (not the email address);
+   the workflow passes it to `NuGet/login`, which exchanges the job's OIDC token for an API key that is
+   valid for one hour. If nuget.org shows the policy as temporarily active, the first successful publish
+   makes it permanent; if nothing is published within 7 days it goes inactive, and you can restart it.

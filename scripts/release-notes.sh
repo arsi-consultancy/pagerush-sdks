@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Usage: scripts/release-notes.sh <tag>
 #
-# Checks that a release tag (node-v1.2.3, python-v1.2.3, php-v1.2.3 or go/v1.2.3) matches the SDK's
-# version source and has a dated CHANGELOG.md entry, then prints that entry's notes.
+# Checks that a release tag (node-v1.2.3, python-v1.2.3, php-v1.2.3, go/v1.2.3 or dotnet-v1.2.3)
+# matches the SDK's version source and has a dated CHANGELOG.md entry, then prints that entry's notes.
 set -euo pipefail
 
 tag="${1:?usage: $0 <tag>}"
@@ -11,6 +11,7 @@ case "$tag" in
   python-v*) sdk=python; version="${tag#python-v}" ;;
   php-v*)    sdk=php;    version="${tag#php-v}" ;;
   go/v*)     sdk=go;     version="${tag#go/v}" ;;
+  dotnet-v*) sdk=dotnet; version="${tag#dotnet-v}" ;;
   *) echo "unrecognised tag: $tag" >&2; exit 1 ;;
 esac
 
@@ -27,6 +28,7 @@ case "$sdk" in
   python) source_file="$root/python/src/pagerush/_version.py";  pattern="__version__ = \"$version\"" ;;
   php)    source_file="$root/php/src/Version.php";              pattern="VERSION = '$version';" ;;
   go)     source_file="$root/go/version.go";                    pattern="const Version = \"$version\"" ;;
+  dotnet) source_file="$root/dotnet/src/PageRush/PageRush.csproj"; pattern="<Version>$version</Version>" ;;
 esac
 if ! grep -qF "$pattern" "$source_file"; then
   echo "$tag: ${source_file#"$root/"} does not set version $version" >&2

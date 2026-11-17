@@ -9,6 +9,7 @@ with JSON data, and get PDFs back.
 | Python | `pagerush` (PyPI) | `pip install pagerush` | [python/README.md](python/README.md) |
 | PHP | `pagerush/pagerush-php` (Packagist) | `composer require pagerush/pagerush-php` | [php/README.md](php/README.md) |
 | Go | `github.com/arsi-consultancy/pagerush-sdks/go` | `go get github.com/arsi-consultancy/pagerush-sdks/go@latest` | [go/README.md](go/README.md) |
+| .NET / C# | `PageRush` (NuGet) | `dotnet add package PageRush` | [dotnet/README.md](dotnet/README.md) |
 
 Every SDK has the same features:
 
@@ -17,7 +18,8 @@ Every SDK has the same features:
 - Jobs: check status, wait for a queued render, download the PDF.
 - Webhooks: verify the `X-PageRush-Signature` on callback deliveries.
 - Safe retries: render calls always carry an idempotency key, so a retry never renders or charges twice.
-- No runtime dependencies beyond the language's standard library.
+- No runtime dependencies beyond the language's standard library (the .NET SDK's .NET Standard 2.0 build
+  depends on `System.Text.Json`).
 
 ## 30-second example (Node)
 
@@ -43,7 +45,7 @@ Each SDK's README has the same example in its own language.
 ```
 SPEC.md        the behaviour every SDK implements (methods, retries, errors, webhooks, versioning)
 testdata/      shared test vectors (webhook signatures) that every SDK's tests read
-node/ python/ php/ go/   one SDK each, with its own README, CHANGELOG and examples
+node/ python/ php/ go/ dotnet/   one SDK each, with its own README, CHANGELOG and examples
 ```
 
 ## Versioning

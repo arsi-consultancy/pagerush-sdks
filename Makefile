@@ -1,11 +1,12 @@
-.PHONY: check check-testdata sync-testdata node python php go
+.PHONY: check check-testdata sync-testdata node python php go dotnet
 
 FIXTURES := node/test/fixtures/webhooks.json \
 	python/tests/fixtures/webhooks.json \
 	php/tests/fixtures/webhooks.json \
-	go/testdata/webhooks.json
+	go/testdata/webhooks.json \
+	dotnet/tests/PageRush.Tests/fixtures/webhooks.json
 
-check: check-testdata node python php go
+check: check-testdata node python php go dotnet
 
 # Each SDK keeps its own copy of the shared webhook vectors so its tests also run from a
 # published package or a split repository.
@@ -28,3 +29,6 @@ php:
 
 go:
 	cd go && test -z "$$(gofmt -l .)" && go vet ./... && go test -race ./...
+
+dotnet:
+	cd dotnet && dotnet format --verify-no-changes && dotnet build -c Release && dotnet test -c Release

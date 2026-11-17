@@ -1,13 +1,14 @@
 # PageRush SDK contract
 
-Every SDK in this repo (node, python, php, go) implements this contract. Behaviour must match
+Every SDK in this repo (node, python, php, go, dotnet) implements this contract. Behaviour must match
 across languages; only naming follows each language's conventions. The source of truth for the
 HTTP API is the server's OpenAPI document at `https://pagerush.dev/v1/openapi.json`. If this file and the server disagree, the server wins and this
 file gets fixed.
 
 Version for the first release: **0.1.0**. Licence: MIT, "Copyright (c) 2026 Arsi Consultancy".
 No runtime dependencies beyond the language's standard library (Node: built-in `fetch` and Web Crypto;
-PHP: ext-curl, ext-json; Python: stdlib; Go: stdlib).
+PHP: ext-curl, ext-json; Python: stdlib; Go: stdlib; .NET: the base class library on net10.0, plus
+`System.Text.Json` (and what it brings, such as `Microsoft.Bcl.AsyncInterfaces`) on netstandard2.0 only).
 
 ## Client
 
@@ -19,16 +20,17 @@ Constructor options:
 | base URL | `https://pagerush.dev` | Env `PAGERUSH_BASE_URL` overrides the default. Strip trailing `/`. |
 | timeout | 60 s | Per HTTP attempt. |
 | max retries | 2 | Retries after the first attempt (so up to 3 attempts). |
-| transport | language default | Injectable for tests (Node: `fetch` option; Python: an opener/transport callable; PHP: a callable or interface; Go: `*http.Client`). |
+| transport | language default | Injectable for tests (Node: `fetch` option; Python: an opener/transport callable; PHP: a callable or interface; Go: `*http.Client`; .NET: `HttpClient`). |
 
 Every request sends:
 - `Authorization: Bearer <key>`
-- `User-Agent: pagerush-<lang>/<sdk version>` (e.g. `pagerush-node/0.1.0`)
+- `User-Agent: pagerush-<lang>/<sdk version>` (e.g. `pagerush-node/0.1.0`, `pagerush-dotnet/0.1.0`)
 - `Accept: application/json` (render: `Accept: application/pdf, application/json`)
 - `Content-Type: application/json` when there is a body.
 
 Request and response bodies use the API's own **snake_case field names** in every language (Go:
-struct fields with `json:"snake_case"` tags; Node: TypeScript interfaces with snake_case keys). Only
+struct fields with `json:"snake_case"` tags; Node: TypeScript interfaces with snake_case keys; .NET: PascalCase
+properties with `[JsonPropertyName("snake_case")]`). Only
 SDK-level options (idempotency key, prefer async, timeouts) use idiomatic names. Don't rename API
 fields; that avoids a mapping layer that can drift from the server.
 
@@ -100,7 +102,8 @@ The server refuses a batch the quota and credits can't cover (402 `QUOTA_EXCEEDE
 
 ## Errors
 
-All non-2xx responses raise/return a `PageRushError` (Go: `*pagerush.Error`, usable with `errors.As`) with:
+All non-2xx responses raise/return a `PageRushError` (Go: `*pagerush.Error`, usable with `errors.As`; .NET:
+`PageRushException`) with:
 `status` (int), `code` (string from body; `UNKNOWN` if an error body isn't problem+json; `INVALID_RESPONSE` with the real status when a 2xx body can't be used, e.g. non-JSON, missing wrapper, or a 200 render that isn't `application/pdf`), `title`, `detail`,
 `errors` (list of `{path, message}`, may be empty — on TEMPLATE_COMPILE_FAILED these are Typst diagnostics),
 `request_id` (body `request_id`, else header `X-Request-Id`), `retry_after` (seconds from `Retry-After`, or null),
@@ -200,7 +203,7 @@ Test vectors: the canonical file is `testdata/webhooks.json` at the repo root, g
 `testdata/generate-webhooks.mjs`. Each case has `body_base64`, `headers` (signature, event, job id and, when present,
 metadata), `secrets`, `now`, `tolerance_seconds`, `valid` and, for failures, `reason`. Each SDK keeps an identical copy
 inside its own directory (node `test/fixtures/webhooks.json`, python `tests/fixtures/webhooks.json`, php
-`tests/fixtures/webhooks.json`, go `testdata/webhooks.json`) so tests also work from a published package or a split repo.
+`tests/fixtures/webhooks.json`, go `testdata/webhooks.json`, dotnet `tests/PageRush.Tests/fixtures/webhooks.json`) so tests also work from a published package or a split repo.
 `make sync-testdata` copies it and `make check-testdata` (run in CI) fails if a copy differs. Every SDK must pass every
 case by calling its public `verify` with the case's headers.
 
@@ -218,7 +221,7 @@ batches.wait, batches.downloadZip (auth header sent, non-ZIP 200 rejected), cons
 ## Per-SDK README
 
 Install, quickstart (create template, render, save PDF), async with callback + webhook verification example
-(Express / Flask / plain PHP / net/http), error handling, retries/idempotency, configuration, licence.
+(Express / Flask / plain PHP / net/http / ASP.NET Core), error handling, retries/idempotency, configuration, licence.
 Plain, accurate copy: claim only what the code does.
 
 ## Versioning
@@ -230,9 +233,11 @@ Plain, accurate copy: claim only what the code does.
   - python: `src/pagerush/_version.py` `__version__`; `pyproject.toml` reads it dynamically (hatch `[tool.hatch.version]`).
   - php: `src/Version.php` `const VERSION` (Composer takes versions from git tags, so no `version` in composer.json).
   - go: `version.go` `const Version` (Go takes versions from git tags).
+  - dotnet: `src/PageRush/PageRush.csproj` `<Version>`; the build generates `PageRushClient.Version` from it (a test
+    compares it with the csproj and the assembly version).
   The User-Agent uses that constant.
-- **Git tags** (monorepo): `node-v0.1.0`, `python-v0.1.0`, `php-v0.1.0`, and for Go the module-path tag
-  `go/v0.1.0` (required by the Go toolchain for a module in the `go/` subdirectory).
+- **Git tags** (monorepo): `node-v0.1.0`, `python-v0.1.0`, `php-v0.1.0`, `dotnet-v0.1.0`, and for Go the module-path
+  tag `go/v0.1.0` (required by the Go toolchain for a module in the `go/` subdirectory).
 - **CHANGELOG.md** in each SDK directory, in Keep a Changelog 1.1.0 format, with an `## [Unreleased]` section
   and `## [0.1.0] - 2026-11-09` listing what this release contains (Added: …).
 - Each README states: supported language/runtime versions, the API version targeted (`v1`), and the versioning policy.
@@ -256,7 +261,7 @@ Each SDK directory contains:
    - Supported versions, versioning policy, link to CHANGELOG, licence.
 2. `examples/` with small runnable programs: `quickstart`, `async-render` (preferAsync, handling both a PDF and a queued job with jobs.wait/jobs.download), `webhook-receiver`.
    They read the key from `PAGERUSH_API_KEY`. Each must at least compile/type-check/lint in the SDK's tests or CI script.
-3. Doc comments on every public symbol (TSDoc / Python docstrings / PHPDoc / Go doc comments), so editors show help
+3. Doc comments on every public symbol (TSDoc / Python docstrings / PHPDoc / Go doc comments / C# XML doc comments), so editors show help
    inline and generated docs (TypeDoc, pkg.go.dev, etc.) are useful. Include a short example in the main client's doc comment.
 4. `CHANGELOG.md`, `LICENSE` (MIT, Copyright (c) 2026 Arsi Consultancy).
 
@@ -274,5 +279,11 @@ Behaviour is shared; style is not. Each SDK should read like a well-made library
   readonly promoted properties, PHPStan, a code-style fixer.
 - **go**: Effective Go naming (`TemplateID`, `CallbackURL`), no stutter, functional options, `context.Context`
   first, errors not panics, `Example` functions, gofmt, go vet, staticcheck.
+- **dotnet**: PascalCase members, `...Async` methods returning `Task` with a trailing
+  `CancellationToken cancellationToken = default`, `IAsyncEnumerable<T>` pagination, options classes, exceptions named
+  `...Exception` (`PageRushException`, `PageRushConnectionException`, `WebhookVerificationException`), string
+  constants for codes and statuses (not enums), nullable reference type annotations, XML doc comments, analyzers with
+  warnings as errors, `dotnet format`. Targets netstandard2.0 and net10.0.
 
-API payload fields stay snake_case everywhere (Go maps them with struct tags), as the Stripe SDKs do.
+API payload fields stay snake_case everywhere (Go maps them with struct tags, .NET with `[JsonPropertyName]`), as
+the Stripe SDKs do.

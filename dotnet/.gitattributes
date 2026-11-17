@@ -1,0 +1,2 @@
+# Keep LF endings on every platform: .editorconfig asks for them and CI checks with dotnet format.
+* text=auto eol=lf

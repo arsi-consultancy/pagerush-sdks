@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PageRush/PageRush.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PageRush.Tests/PageRush.Tests.csproj" />
+  </Folder>
+  <Folder Name="/examples/">
+    <Project Path="examples/AsyncRender/AsyncRender.csproj" />
+    <Project Path="examples/Quickstart/Quickstart.csproj" />
+    <Project Path="examples/WebhookReceiver/WebhookReceiver.csproj" />
+  </Folder>
+</Solution>

@@ -1,5 +1,5 @@
-# Weekly update proposals. The SDKs have no runtime dependencies, so these cover development tools
-# and the GitHub Actions used in CI and releases.
+# Weekly update proposals for development tools and the GitHub Actions used in CI and releases. The
+# SDKs have no runtime dependencies, except System.Text.Json for the .NET SDK's netstandard2.0 build.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -21,3 +21,10 @@ updates:
   - package-ecosystem: gomod
     directory: /go
     schedule: { interval: weekly }
+  - package-ecosystem: nuget
+    directory: /dotnet
+    schedule: { interval: weekly }
+    groups: { dotnet-dev: { patterns: ["*"], update-types: [minor, patch] } }
+    # The lowest System.Text.Json version the library supports is a deliberate choice for users of
+    # the netstandard2.0 build; the security workflow reports it if that version has an advisory.
+    ignore: [{ dependency-name: System.Text.Json }]

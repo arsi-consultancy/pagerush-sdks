@@ -18,13 +18,14 @@ Security fixes go into the latest release of each SDK. While an SDK is `0.x`, up
 
 ## Keep your runtime patched
 
-The SDKs have no runtime dependencies. They use your language's own HTTP and TLS code: `urllib` and
-`ssl` in Python, `fetch` in Node.js, the curl extension (and your system's libcurl) in PHP, and
-`net/http` and `crypto/tls` in Go. Security fixes in those come from your runtime, not from an SDK
-update, so:
+The SDKs have no runtime dependencies, except `System.Text.Json` for the .NET SDK on .NET Standard 2.0.
+They use your language's own HTTP and TLS code: `urllib` and `ssl` in Python, `fetch` in Node.js, the
+curl extension (and your system's libcurl) in PHP, `net/http` and `crypto/tls` in Go, and `HttpClient`
+in .NET. Security fixes in those come from your runtime, not from an SDK update, so:
 
-- Use the latest patch release of your Python, Node.js, PHP or Go version, or your Linux
-  distribution's security updates for it.
+- Use the latest patch release of your Python, Node.js, PHP, Go or .NET version, or your Linux
+  distribution's security updates for it. On .NET Framework, keep Windows Update on; if your app
+  references a newer `System.Text.Json` than the SDK needs, NuGet uses yours.
 - The SDKs support older runtimes, such as Python 3.9 and PHP 8.1, because enterprise Linux
   distributions still ship and patch them. If your runtime no longer gets security updates from
   anyone, upgrade it.

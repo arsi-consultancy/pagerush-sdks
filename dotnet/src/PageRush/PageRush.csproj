@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net10.0</TargetFrameworks>
+    <RootNamespace>PageRush</RootNamespace>
+    <AssemblyName>PageRush</AssemblyName>
+
+    <!-- The SDK version. This is the only place to change it: the build generates
+         PageRushClient.Version from it, and the User-Agent uses that constant. -->
+    <Version>0.1.0</Version>
+
+    <PackageId>PageRush</PackageId>
+    <Authors>Arsi Consultancy</Authors>
+    <Company>Arsi Consultancy</Company>
+    <Copyright>Copyright (c) 2026 Arsi Consultancy</Copyright>
+    <Description>.NET client for the PageRush API: store Typst templates, render them with JSON data to PDF, run batches, and verify webhook signatures.</Description>
+    <PackageTags>pagerush;pdf;typst;templates;api;client</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://pagerush.dev</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/arsi-consultancy/pagerush-sdks</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Text.Json" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" Visible="false" />
+    <InternalsVisibleTo Include="PageRush.Tests" />
+  </ItemGroup>
+
+  <!-- Writes PageRushClient.Version from $(Version) into obj/, so the version has one source. -->
+  <Target Name="PageRushGenerateVersion" BeforeTargets="CoreCompile" DependsOnTargets="PrepareForBuild">
+    <PropertyGroup>
+      <PageRushVersionFile>$(IntermediateOutputPath)PageRushClient.Version.g.cs</PageRushVersionFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <PageRushVersionLine Include="// &lt;auto-generated&gt; From &lt;Version&gt; in PageRush.csproj. Do not edit. &lt;/auto-generated&gt;" />
+      <PageRushVersionLine Include="namespace PageRush%3B" />
+      <PageRushVersionLine Include="public sealed partial class PageRushClient" />
+      <PageRushVersionLine Include="{" />
+      <PageRushVersionLine Include="    /// &lt;summary&gt;The version of this SDK. It is sent in the User-Agent header as &lt;c&gt;pagerush-dotnet/&amp;lt%3Bversion&amp;gt%3B&lt;/c&gt;.&lt;/summary&gt;" />
+      <PageRushVersionLine Include="    public const string Version = &quot;$(Version)&quot;%3B" />
+      <PageRushVersionLine Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(PageRushVersionFile)" Lines="@(PageRushVersionLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(PageRushVersionFile)" />
+      <FileWrites Include="$(PageRushVersionFile)" />
+    </ItemGroup>
+  </Target>
+
+</Project>
