@@ -7,6 +7,8 @@ follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-18
+
 ### Added
 
 - `PageRushClient` for the `/v1` API, configured with `PageRushClientOptions` or the `PAGERUSH_API_KEY`
@@ -46,4 +48,5 @@ follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 - `TemplateFile.FromString`, `FromBytes` and `FromPath`, which pick `utf8` or `base64` by file extension.
 - Targets .NET Standard 2.0 and .NET 10. Nullable annotations and XML docs on every public symbol.
 
-[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/commits/main/dotnet
+[Unreleased]: https://github.com/arsi-consultancy/pagerush-sdks/compare/dotnet-v0.1.0...HEAD
+[0.1.0]: https://github.com/arsi-consultancy/pagerush-sdks/releases/tag/dotnet-v0.1.0
